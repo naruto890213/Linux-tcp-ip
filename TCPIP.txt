@@ -1,0 +1,269 @@
+Linux数据包接收流程：
+non-NAPI:
+1.数据包到达网卡
+2.网卡触发中断
+3.根据中断号调用handler
+4.handler会从网卡中拷贝出数据包到sk_buff中，并初始化一些属性
+5.handler调用netif_rx，后者会将这个设备对应的backuplog_dev(也是一个net_device结构体)附加到poll_list中，同时将数据包放到softnet_data的input_pkt_queue尾部
+6.触发软中断
+7.软中断处理函数发现poll_list非空，于是遍历poll_list，对每个设备调用poll方法。在non-NAPI中，poll是内核提供的默认方法，处理逻辑就是从softnet_data的input_pkt_queue取出数据包然后进行处理
+
+NAPI:
+1.数据包到达网卡
+2.网卡触发中断
+3.根据中断号调用handler
+4.handler将这个设备放到poll_list中
+5.触发软中断
+6.软中断处理函数发现poll_list非空，于是遍历poll_list，对每个设备调用poll方法。对于NAPI其poll方法就是驱动自己实现的了
+
+poll的处理入口函数 netif_receive_skb
+	|--netif_receive_skb //net/core/dev.c
+		|--netif_receive_skb_internal
+			|--__netif_receive_skb//
+				|--__netif_receive_skb_core//
+		
+
+数据包接收过程：
+	当一个数据包到来时，NIC会产生一个中断，这时，它会执行中断处理全程。
+	(1), NON-NAPI方式：
+		如3c59x中的vortex_interrupt(),它会判断寄存器的值作出相应的动作：
+			if (status & RxComplete) 
+				vortex_rx(dev); 
+		如上，当中断指示有数据包在等待接收，这时，中断例程会调用接收函数vortex_rx(dev)
+		
+	vortex_interrupt// -->drivers/net/ethernet/3com/3c59x.c
+		if (status & RxComplete)
+            vortex_rx(dev);//接收处理函数
+			
+	
+	vortex_rx//
+		netdev_alloc_skb//分配空间
+		skb_reserve(skb, 2)//
+		eth_type_trans(skb, dev)//获取协议类型
+		netif_rx(skb)//netif的接收处理函数
+		
+	eth_type_trans//协议处理函数(获取当前传入的sk_buff数据包的协议类型)
+	
+	__be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
+	{
+		unsigned short _service_access_point;
+		const unsigned short *sap;
+		const struct ethhdr *eth;
+
+		//将接收到的net_device赋值给skb
+		skb->dev = dev;
+		//将skb的mac头指针赋值
+		skb_reset_mac_header(skb);
+		//将skb->data下移，跳过以太头
+		skb_pull_inline(skb, ETH_HLEN);
+		eth = eth_hdr(skb);
+
+		if (unlikely(is_multicast_ether_addr(eth->h_dest))) {
+			//判断是否为广播和组播报文，如果是则给skb->pkt_type进行赋值
+			if (ether_addr_equal_64bits(eth->h_dest, dev->broadcast))
+				skb->pkt_type = PACKET_BROADCAST;
+			else
+				skb->pkt_type = PACKET_MULTICAST;
+		}
+		else if (unlikely(!ether_addr_equal_64bits(eth->h_dest,
+							   dev->dev_addr)))
+			//如果报文的目的mac不是接收设备的mac，设置skb->pkt_type
+			skb->pkt_type = PACKET_OTHERHOST;
+			
+		/*
+		 * Some variants of DSA tagging don't have an ethertype field
+		 * at all, so we check here whether one of those tagging
+		 * variants has been configured on the receiving interface,
+		 * and if so, set skb->protocol without looking at the packet.
+		 */
+		if (unlikely(netdev_uses_dsa(dev)))
+			return htons(ETH_P_XDSA);
+
+		if (likely(ntohs(eth->h_proto) >= ETH_P_802_3_MIN))
+			return eth->h_proto;
+
+		/*
+		 *      This is a magic hack to spot IPX packets. Older Novell breaks
+		 *      the protocol design and runs IPX over 802.3 without an 802.2 LLC
+		 *      layer. We look for FFFF which isn't a used 802.2 SSAP/DSAP. This
+		 *      won't work for fault tolerant netware but does for the rest.
+		 */
+		sap = skb_header_pointer(skb, 0, sizeof(*sap), &_service_access_point);
+		if (sap && *sap == 0xFFFF)
+			return htons(ETH_P_802_3);
+
+		/*
+		 *      Real 802.2 LLC
+		 */
+		 
+		return htons(ETH_P_802_2);
+	}
+	
+	struct packet_type// -->include/linux/netdevice.h
+	
+	|-->netif_rx//处理接收数据的核心函数 net/core/dev.c
+		|-->netif_rx_internal// 内核接口net/core/dev.c
+			|-->enqueue_to_backlog// 内核接口net/core/dev.c
+			
+			
+	drivers/net/ethernet/realtek/8139cp.c
+	8139cp芯片的数据流程分析：
+	|-->cp_driver//驱动入口
+		|-->cp_init_one//探针
+			|-->cp_rx_poll//poll调用方法
+				|-->cp_rx_skb//
+					|-->napi_gro_receive //net/core/dev.c
+						|-->napi_skb_finish
+							|-->netif_receive_skb_internal
+								|-->__netif_receive_skb
+		
+		|-->cp_remove_one//卸载
+		
+	|-->net_dev_init//dev初始化，新建一个dev时会调用此函数 net/core/dev.c
+		|-->sd->backlog.poll = process_backlog//绑定poll回调函数为process_backlog
+		|-->net_tx_action(NET_TX_SOFTIRQ)//注册发送信号函数
+		|-->net_rx_action(NET_RX_SOFTIRQ)//注册接收信号函数
+			|-->napi_poll//处理一个节点数据
+				|-->n->poll(process_backlog)//实际调用的函数是process_backlog
+					|-->__netif_receive_skb//(dev.c)接收到的数据处理函数
+						|-->__netif_receive_skb_core//(dev.c)
+							|-->rcu_dereference(skb->dev->rx_handler)//(dev.c)
+								|-->skb->dev->rx_handler = br_handle_frame//(br_input.c)(实际调用的函数是br_handle_frame,具体实现见
+										|-->br_add_if//(br_if.c)
+											|-->netdev_rx_handler_register(dev, br_handle_frame, p)//(dev.c)
+												|-->rcu_assign_pointer(dev->rx_handler, rx_handler)//(dev.c))
+											
+									|-->is_valid_ether_addr//(etherdevice.h) 检查mac地址的有效性
+									|-->NF_HOOK(NFPROTO_BRIDGE, NF_BR_PRE_ROUTING, NULL, skb,
+																				skb->dev, NULL,
+																				br_handle_frame_finish)//HOOK函数(br_input.c)
+											
+										|-->br_handle_frame_finish//(br_input.c)
+											|-->br_pass_frame_up//(br_input.c)
+												|-->NF_HOOK(NFPROTO_BRIDGE, NF_BR_LOCAL_IN, NULL, skb,
+																						   indev, NULL,
+																						   netif_receive_skb_sk)//
+													|-->netif_receive_skb_sk//(dev.c)
+														|-->netif_receive_skb_internal
+							
+							|-->deliver_ptype_list_skb(根据协议类型进行遍历,当查询到对应的协议则返回节点)
+							|-->pt_prev->func(ip_rcv)(上一步查询返回的节点回调函数，ipv4对应的函数是ip_rcv)
+								|-->NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING, net, NULL, skb, dev, NULL, ip_rcv_finish)//netfilter处理，如果对应的钩子函数未注册则直接执行ip_rcv_finish (net/ipv4/ip_input.c)
+									|-->ip_rcv_finish//netfilter处理完成后进入的函数
+										|-->ip_route_input_noref//路由选择(net/ipv4/route.c)
+											|-->ip_route_input_slow//
+												|-->判断res.type == RTN_LOCAL,如果是发往本地的数据包则goto local_input
+													|-->local_input:
+														|-->rt_dst_alloc//分配内存
+															|-->rt->dst.input = ip_local_deliver//发往本地的数据包处理函数
+															|-->rt->dst.output = ip_output//后续传出数据需要
+														|-->skb_dst_set//将rth->dst指针赋值给skb->_skb_refdst
+														
+												|-->ip_mkroute_input//如果不是本地的数据包，则走内核路由选择
+													|-->__mkroute_input//内核路由选择
+														|-->rt->dst.output = ip_output//后续传出数据需要
+														|-->rth->dst.input = ip_forward//走数据转发路径
+														|-->skb_dst_set//将rth->dst指针赋值给skb->_skb_refdst
+													
+										|-->dst_input(skb->_skb_refdst->input)//数据处理函数，实际调用的是在上面设置好的回调函数
+											case local in:
+												|-->ip_local_deliver//(net/ipv4/ip_input.c)本地数据包处理函数(将数据包往上一层进行传送)
+													|-->NF_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_IN, net, NULL, skb, skb->dev, NULL, ip_local_deliver_finish)//进入netfilter中的input表处理，如果无注册钩子函数则直接执行ip_local_deliver_finish
+														|-->ip_local_deliver_finish//
+															|-->ipprot->handler//(net/ipv4/af_inet.c文件inet_init函数中inet_add_protocol进行初始化handler指针的初始化)
+																case udp_protocol：
+																
+																case tcp_protocol:
+																	|-->tcp_v4_rcv//(net/ipv4/tcp_ipv4.c)
+																		|-->
+																
+																case icmp_protocol:
+																
+																case igmp_protocol:
+																
+													
+											
+											case forward:
+												|-->ip_forward//转发数据包处理函数(net/ipv4/ip_forward.c)
+													|-->NF_HOOK(NFPROTO_IPV4, NF_INET_FORWARD, net, NULL, skb, skb->dev, rt->dst.dev, ip_forward_finish)//进入netfilter中的forward表处理，如果无注册钩子函数则直接执行ip_forward_finish
+														|-->ip_forward_finish//
+															|-->dst_output(skb->_skb_refdst->output)//由上面函数处理设置回调函数，实际调用的是ip_output
+																|-->ip_output//(net/ipv4/ip_output.c)
+																	|-->NF_HOOK_COND(NFPROTO_IPV4, NF_INET_POST_ROUTING, net, sk, skb, NULL, dev, ip_finish_output, !(IPCB(skb)->flags & IPSKB_REROUTED))//进入netfilter中的postrouting表处理，如果无注册钩子函数则直接执行ip_finish_output
+																		|-->ip_finish_output//(ip_output.c)
+																			|-->ip_finish_output2//(ip_output.c)
+																				|-->neigh_output//(include/net/neighbour.h)
+																					|-->neigh_hh_output//(neighbour.h)
+																						|-->dev_queue_xmit//(net/core/dev.c)
+																							|-->__dev_queue_xmit//(dev.c)
+																								|-->__dev_xmit_skb//(dev.c)
+																									|-->sch_direct_xmit//(net/sched/sch_generic.c)
+																										|-->dev_hard_start_xmit//(net/core/dev.c)
+																											|-->xmit_one//
+																												|-->netdev_start_xmit//
+																													|-->__netdev_start_xmit//(include/linux/netdevice.h)
+																														|-->__netdev_start_xmit//
+																															|-->ops->ndo_start_xmit//硬件驱动初始化时进行赋值
+																													
+											case local_output:
+												case tcp://
+													|-->tcp_sendmsg//(net/ipv4/tcp.c)数据包发送所调用的内核函数
+														|-->tcp_push//
+															|-->__tcp_push_pending_frames//(net/ipv4/tcp_output.c)
+																|-->tcp_write_xmit//
+																	|-->tcp_transmit_skb//
+																		|-->icsk->icsk_af_ops->queue_xmit(ip_queue_xmit)//实际调用的函数是ip_queue_xmit
+																			|-->ip_queue_xmit//(net/ipv4/ip_output.c)
+																				|-->ip_local_out//(ip_output.c)
+																					|-->__ip_local_out//本地数据包发出(net/ipv4/ip_output.c)
+																						|-->nf_hook(NFPROTO_IPV4, NF_INET_LOCAL_OUT, net, sk, skb, NULL, skb_dst(skb)->dev, dst_output)//(include/linux/netfilter.h)
+																							|-->nf_hook_state_init//将dst_output赋值到state
+																							|-->nf_hook_slow//(net/netfilter/core.c)
+																
+																					|-->dst_output(skb->_skb_refdst->output)//因为 __ip_local_out 永远返回1，所以会直接调用该函数
+																						|-->ip_output//(net/ipv4/ip_output.c)//参考forward的流程分析
+																							
+												
+							
+	static struct packet_type ip_packet_type __read_mostly = {
+		.type = cpu_to_be16(ETH_P_IP),
+		.func = ip_rcv,
+	};//ipv4的初始化结构体
+	
+	fs_initcall(inet_init) //net/ipv4/af_inet.c
+	
+	|-->inet_init//(IPV4的初始化) //net/ipv4/af_inet.c (该初始化会添加tcp,udp,icmp报文的处理函数)
+		|-->proto_register//注册tcp、udp等协议的回调函数，包含sendmsg、ioctl、bind等函数的原型
+		|-->inet_add_protocol//注册协议回调函数，在input中需要使用(.handler主要是初始化handler指针)
+		|-->dev_add_pack(&ip_packet_type)//添加到链表中
+
+		
+	dccp_ipv4_af_ops = {
+		.queue_xmit    = ip_queue_xmit
+	}//(net/dccp/ipv4.c)
+	
+	|-->dccp_v4_init_sock//(net/dccp/ipv4.c)
+		|-->inet_csk(sk)->icsk_af_ops = &dccp_ipv4_af_ops//绑定dccp_ipv4_af_ops结构体
+		
+	dccp_v4_prot = {
+		.init           = dccp_v4_init_sock//初始化绑定
+	｝//(net/dccp/ipv4.c)
+	
+POSTROUTING
+PREROUTING
+INPUT
+OUTPUT
+FORWARD
+	
+BRCTL_SET_BRIDGEPERMIT
+
+|-->inet_rtm_getroute //(route.c)	
+	|-->ip_route_input //(route.h)
+		|-->ip_route_input_noref //(route.c)
+			|-->ip_route_input_slow //(route.c)
+				|-->fib_lookup //(ip_fib.h)
+					|-->fib_get_table //
+					|-->fib_table_lookup //
+				|-->ip_mkroute_input //(route.c)
+					|-->__mkroute_input //(route.c)
+						|-->

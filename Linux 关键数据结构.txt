@@ -1,0 +1,646 @@
+|-------------------------------------------------sk_buff 结构--------------------------------------------------|
+
+|-->struct sk_buff {
+    union {
+        struct {
+            /* These two members must be first. */
+            struct sk_buff      *next;
+            struct sk_buff      *prev;
+
+            union {
+                ktime_t     tstamp; //通常只对一个已接收的封包才有意义。用于表示封包何时被接收，或者有时用于表示封包预定传输的时间。字段由netif_rx函数用net_timestamp设置
+                u64     skb_mstamp;
+            };
+        };
+        struct rb_node  rbnode; /* used in netem & tcp stack */
+    };
+    struct sock     		*sk; //重要数据，指向拥有此缓冲区的套接字的sock数据结构，当缓冲区只是被转发时该指针为NULL
+
+    union {
+        struct net_device   *dev;//此字段描述一个网络设备，dev所代表的设备的角色依赖于存储在该缓冲区的封包是即将传输还是刚被接收而定
+        unsigned long       dev_scratch;
+    };
+    char            		cb[48] __aligned(8); //控制缓冲区，用于存储私有信息(每一个层都有自己的数据)
+    unsigned long       	_skb_refdst;
+    void            		(*destructor)(struct sk_buff *skb); //销毁回调函数指针
+#ifdef CONFIG_XFRM
+    struct  sec_path    	*sp;
+#endif
+#if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
+    unsigned long        	_nfct;
+#endif
+#if IS_ENABLED(CONFIG_BRIDGE_NETFILTER)
+    struct nf_bridge_info   *nf_bridge;
+#endif
+    unsigned int        	len, //缓冲区中数据区块的大小，该长度包括主要缓冲区的数据以及一些片段的数据
+							data_len; //只计算片段中的数据大小
+    __u16           		mac_len, //MAC报头的大小
+							hdr_len; 
+
+    /* Following fields are _not_ copied in __copy_skb_header()
+     * Note that queue_mapping is here mostly to fill a hole.
+     */
+    kmemcheck_bitfield_begin(flags1);
+    __u16           		queue_mapping;
+
+/* if you move cloned around you also must adapt those constants */
+#ifdef __BIG_ENDIAN_BITFIELD
+#define CLONED_MASK (1 << 7)
+#else
+#define CLONED_MASK 1
+#endif
+#define CLONED_OFFSET()     offsetof(struct sk_buff, __cloned_offset)
+
+    __u8            		__cloned_offset[0];
+    __u8            		cloned:1,
+							nohdr:1,
+							fclone:2,
+							peeked:1,
+							head_frag:1,
+							xmit_more:1,
+							__unused:1; /* one bit hole */
+    kmemcheck_bitfield_end(flags1);
+	__u32           headers_start[0];
+#ifdef __BIG_ENDIAN_BITFIELD
+#define PKT_TYPE_MAX    (7 << 5)
+#else
+#define PKT_TYPE_MAX    7
+#endif
+#define PKT_TYPE_OFFSET()   offsetof(struct sk_buff, __pkt_type_offset)
+
+    __u8            		__pkt_type_offset[0];
+    __u8            		pkt_type:3; //此字段会根据帧的L2目的地址进行分类划分，可能的取值列于include/linux/if_packet.h中。在eth_type_trans函数中会被调用
+    __u8            		pfmemalloc:1;
+    __u8            		ignore_df:1;
+
+    __u8            		nf_trace:1;
+    __u8            		ip_summed:2;
+    __u8            		ooo_okay:1;
+    __u8            		l4_hash:1;
+    __u8            		sw_hash:1;
+    __u8            		wifi_acked_valid:1;
+    __u8            		wifi_acked:1;
+
+    __u8            		no_fcs:1;
+    /* Indicates the inner headers are valid in the skbuff. */
+    __u8            		encapsulation:1;
+    __u8            		encap_hdr_csum:1;
+    __u8            		csum_valid:1;
+    __u8            		csum_complete_sw:1;
+    __u8            		csum_level:2;
+    __u8            		csum_not_inet:1;
+
+    __u8            		dst_pending_confirm:1;
+#ifdef CONFIG_IPV6_NDISC_NODETYPE
+    __u8            		ndisc_nodetype:2;
+#endif
+    __u8            		ipvs_property:1;
+    __u8            		inner_protocol_type:1;
+    __u8            		remcsum_offload:1;
+#ifdef CONFIG_NET_SWITCHDEV
+    __u8            		offload_fwd_mark:1;
+#endif
+#ifdef CONFIG_NET_CLS_ACT
+    __u8            		tc_skip_classify:1;
+    __u8            		tc_at_ingress:1;
+    __u8            		tc_redirected:1;
+    __u8            		tc_from_ingress:1;
+#endif
+
+#ifdef CONFIG_NET_SCHED
+    __u16           		tc_index;   /* traffic control index */
+#endif
+
+    union {
+        __wsum      		csum;
+        struct {
+            __u16   		csum_start;
+            __u16   		csum_offset;
+        };
+    };
+    __u32           		priority; //QoS等级，在函数rt_tos2priority中被调用设置
+    int         			skb_iif;
+    __u32           		hash;
+    __be16          		vlan_proto;
+    __u16           		vlan_tci;
+#if defined(CONFIG_NET_RX_BUSY_POLL) || defined(CONFIG_XPS)
+    union {
+        unsigned int    	napi_id;
+        unsigned int    	sender_cpu;
+    };
+#endif
+#ifdef CONFIG_NETWORK_SECMARK
+    __u32       			secmark;
+#endif
+	union {
+        __u32       		mark;
+        __u32       		reserved_tailroom;
+    };
+
+    union {
+        __be16      		inner_protocol;
+        __u8        		inner_ipproto;
+    };
+
+    __u16           		inner_transport_header;
+    __u16           		inner_network_header;
+    __u16           		inner_mac_header;
+
+    __be16          		protocol;
+    __u16           		transport_header;
+    __u16           		network_header;
+    __u16           		mac_header;
+
+    /* private: */
+    __u32           		headers_end[0];
+    /* public: */
+
+    /* These elements must be at the end, see alloc_skb() for details.  */
+    sk_buff_data_t      	tail;
+    sk_buff_data_t      	end;
+    unsigned char       	*head,
+							*data;
+    unsigned int        	truesize; //缓冲区总的大小，包括sk_buff结构本身
+    refcount_t      		users; //引用计数
+}; //(include/linux/skbuff.h) 套接字缓冲区结构体
+
+
+|-->struct sk_buff_head {
+    /* These two members must be first. */
+    struct sk_buff  *next;
+    struct sk_buff  *prev;
+
+    __u32       	qlen; //表中元素的数目
+    spinlock_t  	lock; //并发锁
+}; //用于sk_buff的布局
+
+|-->alloc_skb //(include/linux/skbuff.h) 分配内存
+	|-->__alloc_skb(size, priority, 0, NUMA_NO_NODE) //(net/core/skbuff.c)
+		|-->cache = (flags & SKB_ALLOC_FCLONE) ? skbuff_fclone_cache : skbuff_head_cache
+		|-->if (sk_memalloc_socks() && (flags & SKB_ALLOC_RX))
+			|-->gfp_mask |= __GFP_MEMALLOC
+			
+		|-->skb = kmem_cache_alloc_node(cache, gfp_mask & ~__GFP_DMA, node)
+		|-->prefetchw(skb)
+		|-->size = SKB_DATA_ALIGN(size) //对齐数据长度
+		|-->size += SKB_DATA_ALIGN(sizeof(struct skb_shared_info))
+		|-->data = kmalloc_reserve(size, gfp_mask, node, &pfmemalloc)
+		|-->size = SKB_WITH_OVERHEAD(ksize(data))
+		|-->prefetchw(data + size)
+		|-->memset(skb, 0, offsetof(struct sk_buff, tail))
+		|-->skb->truesize = SKB_TRUESIZE(size)
+		|-->skb->pfmemalloc = pfmemalloc
+		|-->refcount_set(&skb->users, 1)
+		|-->skb->head = skb->data = data
+		|-->skb_reset_tail_pointer(skb)
+		|-->skb->end = skb->tail + size
+		|-->skb->mac_header = (typeof(skb->mac_header))~0U
+		|-->skb->transport_header = (typeof(skb->transport_header))~0U
+		|-->shinfo = skb_shinfo(skb)
+		|-->memset(shinfo, 0, offsetof(struct skb_shared_info, dataref))
+		|-->atomic_set(&shinfo->dataref, 1)
+		|-->kmemcheck_annotate_variable(shinfo->destructor_arg)
+		
+		|-->return skb //返回skb结构体
+		
+		
+|-->kmem_cache_alloc_node //(include/linux/slab.h)
+	|-->kmem_cache_alloc(s, flags) //(mm/slab.c)
+		|-->slab_alloc(cachep, flags, _RET_IP_)
+		|-->kasan_slab_alloc(cachep, ret, flags)
+		|-->trace_kmem_cache_alloc(_RET_IP_, ret,
+                   cachep->object_size, cachep->size, flags)
+				 
+		|-->ret
+		
+		
+|-->skb_shinfo //(include/linux/skbuff.h) 
+	|-->((struct skb_shared_info *)(skb_end_pointer(SKB))) //(include/linux/skbuff.h)
+		|-->skb_end_pointer //(include/linux/skbuff.h)
+			|-->skb->head + skb->end
+			
+|-->dev_alloc_skb //(include/linux/skbuff.h) 设备驱动程序使用的缓冲区分配函数，应该是在中断模式中执行
+	|-->netdev_alloc_skb //(include/linux/skbuff.h)
+		|-->__netdev_alloc_skb //(net/core/skbuff.c)
+			|-->skb = __alloc_skb(len, gfp_mask, SKB_ALLOC_RX, NUMA_NO_NODE)
+			|-->len += SKB_DATA_ALIGN(sizeof(struct skb_shared_info))
+			|-->len = SKB_DATA_ALIGN(len)
+			|-->local_irq_save(flags)
+			|-->nc = this_cpu_ptr(&netdev_alloc_cache)
+			|-->data = page_frag_alloc(nc, len, gfp_mask)
+			|-->local_irq_restore(flags)
+			|-->skb = __build_skb(data, len)
+			|-->skb->head_frag = 1
+			|-->skb_reserve(skb, NET_SKB_PAD)
+			|-->skb->dev = dev
+			|-->return skb
+			
+			
+|-->struct skb_shared_info {
+    unsigned short  			_unused;
+    unsigned char   			nr_frags; //用于处理IP片段
+    __u8        				tx_flags;
+    unsigned short  			gso_size;
+    unsigned short  			gso_segs;
+    struct sk_buff  			*frag_list; //用于处理IP片段
+    struct skb_shared_hwtstamps hwtstamps;
+    unsigned int    			gso_type;
+    u32     					tskey;
+    __be32          			ip6_frag_id;
+    atomic_t    				dataref; //代表数据块的用户数目
+    void *      				destructor_arg;
+    skb_frag_t  				frags[MAX_SKB_FRAGS]; //用于处理IP片段
+};//(include/linux/skbuff.h)
+
+|-->skb_is_nonlinear //(include/linux/skbuff.h) 用于检查缓冲区是否为片段
+	|-->return skb->data_len
+	
+|-->skb_linearize //(include/linux/skbuff.h) 用于把几个片段合压成一个钧一的缓冲区
+	|-->skb_is_nonlinear(skb) ? __skb_linearize(skb) : 0
+		|-->__skb_linearize //(include/linux/skbuff.h)
+			|-->__pskb_pull_tail(skb, skb->data_len) ? 0 : -ENOMEM 
+				|-->__pskb_pull_tail //(net/core/skbuff.c)
+					|-->skb->data_len -= delta
+					|-->skb->tail     += delta
+					|-->skb_tail_pointer(skb)
+						|-->return skb->head + skb->tail
+						
+						
+|-->pskb_copy //(include/linux/skbuff.h) 只拷贝skb->start和skb->end的区域数据
+	|-->__pskb_copy //(include/linux/skbuff.h)
+		|-->__pskb_copy_fclone //(net/core/skbuff.c)
+			|-->size = skb_headlen(skb) + headroom
+			|-->flags = skb_alloc_rx_flag(skb) | (fclone ? SKB_ALLOC_FCLONE : 0)
+			|-->n = __alloc_skb(size, gfp_mask, flags, NUMA_NO_NODE)
+			|-->skb_reserve(n, headroom)
+			|-->skb_put(n, skb_headlen(skb))
+			|-->skb_copy_from_linear_data(skb, n->data, n->len)
+			|-->n->truesize += skb->data_len
+			|-->n->data_len  = skb->data_len
+			|-->n->len       = skb->len
+			|-->if (skb_shinfo(skb)->nr_frags) //查看是否有分段数据
+				|-->if (skb_orphan_frags(skb, gfp_mask) ||
+						skb_zerocopy_clone(n, skb, gfp_mask))
+					|-->kfree_skb(n)
+					|-->return NULL //返回空
+					
+				|-->for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
+					|-->skb_shinfo(n)->frags[i] = skb_shinfo(skb)->frags[i]
+					|-->skb_frag_ref(skb, i)
+					
+				|-->skb_shinfo(n)->nr_frags = i //设置片段数目
+					
+			|-->if (skb_has_frag_list(skb)) //是否分段
+				|-->skb_shinfo(n)->frag_list = skb_shinfo(skb)->frag_list
+				|-->skb_clone_fraglist(n)
+				
+			|-->copy_skb_header(n, skb)
+			|-->return n
+			
+	
+	
+|-->skb_copy //(net/core/skbuff.c) 完全拷贝数据
+	|-->headerlen = skb_headroom(skb)
+	|-->size = skb_end_offset(skb) + skb->data_len
+	|-->n = __alloc_skb(size, gfp_mask, skb_alloc_rx_flag(skb), NUMA_NO_NODE) //分配内存空间
+	|-->skb_reserve(n, headerlen)
+	|-->skb_put(n, skb->len)
+	|-->skb_copy_bits(skb, -headerlen, n->head, headerlen + skb->len)
+	|-->copy_skb_header(n, skb)
+	|-->return n
+	
+|--------------------------------------------------sk_buff 结构 end------------------------------------------------------------|
+
+
+|----------------------------------------------------net_device 结构-----------------------------------------------------------|
+|-->struct net_device {
+    char            			name[IFNAMSIZ]; //设备的名称(例如eth0)
+    struct hlist_node   		name_hlist;
+    char            			*ifalias;
+    /*   
+     *  I/O specific fields
+     *  FIXME: Merge these and struct ifmap into one
+     */
+    unsigned long       		mem_end; //设备所用的共享内存，用于设备与内核沟通
+    unsigned long       		mem_start; //设备所用的共享内存，用于设备与内核沟通
+    unsigned long       		base_addr; //设备自有内存映射到I/O内存的起始地址
+    int         				irq; //中断编号，可由多个设备共享，使用request_irq函数分配此变量
+    atomic_t        			carrier_changes;
+
+    /*   
+     *  Some hardware also needs these fields (state,dev_list,
+     *  napi_list,unreg_list,close_list) but they are not
+     *  part of the usual set specified in Space.c.
+     */
+
+    unsigned long       		state; //网络队列子系统所使用的一组标识，用于标记其状态 见 netdev_state_t
+    struct list_head    		dev_list;
+    struct list_head    		napi_list;
+    struct list_head    		unreg_list;
+    struct list_head    		close_list;
+    struct list_head    		ptype_all;
+    struct list_head    		ptype_specific;
+
+    struct {
+        struct list_head 		upper;
+        struct list_head 		lower;
+    } adj_list;
+
+    netdev_features_t   		features; //用于存储其他一些设备功能，该字段可报告适配卡的功能以便与CPU通信，例如DMA
+    netdev_features_t   		hw_features;
+    netdev_features_t   		wanted_features;
+    netdev_features_t   		vlan_features;
+	netdev_features_t   		hw_enc_features;
+    netdev_features_t   		mpls_features;
+    netdev_features_t   		gso_partial_features;
+    int         				ifindex; //独一无二的ID，当设备以dev_new_index注册时分派给每个设备
+    int         				group;
+    struct net_device_stats 	stats; //数据统计，用于记录数据接收，错误数据等
+    atomic_long_t       		rx_dropped;
+    atomic_long_t       		tx_dropped;
+    atomic_long_t       		rx_nohandler;
+
+#ifdef CONFIG_WIRELESS_EXT
+    const struct iw_handler_def *wireless_handlers;
+    struct iw_public_data   	*wireless_data;
+#endif
+    const struct net_device_ops *netdev_ops;
+    const struct ethtool_ops 	*ethtool_ops;
+#ifdef CONFIG_NET_SWITCHDEV
+    const struct switchdev_ops 	*switchdev_ops;
+#endif
+#ifdef CONFIG_NET_L3_MASTER_DEV
+    const struct l3mdev_ops 	*l3mdev_ops;
+#endif
+#if IS_ENABLED(CONFIG_IPV6)
+    const struct ndisc_ops 		*ndisc_ops;
+#endif
+
+#ifdef CONFIG_XFRM
+    const struct xfrmdev_ops 	*xfrmdev_ops;
+#endif
+
+    const struct header_ops 	*header_ops;
+    unsigned int        		flags; //代表状态的改变(如IFF_UP和IFF_RUNNING)
+    unsigned int        		priv_flags; //
+	unsigned short      		gflags; //几乎已经不再使用 上面的几个标识 dev_change_flags
+    unsigned short      		padded;
+    unsigned char       		operstate;
+    unsigned char       		link_mode;
+    unsigned char       		if_port; //此接口所使用的端口类型
+    unsigned char       		dma; //设备所使用的DMA通道，参考函数request_dma和free_dma
+    unsigned int        		mtu; //最大传输单元，表示设备能处理的帧的最大尺寸
+    unsigned int        		min_mtu;
+    unsigned int        		max_mtu;
+    unsigned short      		type; //设备所属的类型
+    unsigned short      		hard_header_len; //以字节为单位的设备头的大小， Ethernet的报头为14字节
+    unsigned char       		min_header_len;
+    unsigned short      		needed_headroom;
+    unsigned short      		needed_tailroom;
+
+    /* Interface address info. */
+    unsigned char       		perm_addr[MAX_ADDR_LEN];
+    unsigned char       		addr_assign_type;
+    unsigned char       		addr_len;
+    unsigned short      		neigh_priv_len;
+    unsigned short          	dev_id; //当前由ipv6所用，此字段用于区别可由不同OS同时共享的同一种设备的诸多虚拟实例
+    unsigned short          	dev_port;
+    spinlock_t      			addr_list_lock;
+    unsigned char       		name_assign_type;
+    bool            			uc_promisc;
+    struct netdev_hw_addr_list  uc;
+    struct netdev_hw_addr_list  mc;
+    struct netdev_hw_addr_list  dev_addrs;
+
+#ifdef CONFIG_SYSFS
+    struct kset     			*queues_kset;
+#endif
+    unsigned int        		promiscuity; //混杂模式 dev_set_promiscuity该函数设置此值
+    unsigned int        		allmulti;
+#if IS_ENABLED(CONFIG_VLAN_8021Q)
+    struct vlan_info __rcu  	*vlan_info;
+#endif
+#if IS_ENABLED(CONFIG_NET_DSA)
+    struct dsa_switch_tree  	*dsa_ptr;
+#endif
+#if IS_ENABLED(CONFIG_TIPC)
+    struct tipc_bearer __rcu 	*tipc_ptr;
+#endif
+    void            *atalk_ptr;
+    struct in_device __rcu  	*ip_ptr;
+    struct dn_dev __rcu     	*dn_ptr;
+    struct inet6_dev __rcu  	*ip6_ptr;
+    void            			*ax25_ptr;
+    struct wireless_dev 		*ieee80211_ptr;
+    struct wpan_dev     		*ieee802154_ptr;
+#if IS_ENABLED(CONFIG_MPLS_ROUTING)
+    struct mpls_dev __rcu   	*mpls_ptr;
+#endif
+
+/*
+ * Cache lines mostly used on receive path (including eth_type_trans())
+ */
+    /* Interface address info used in eth_type_trans() */
+    unsigned char       		*dev_addr;
+
+#ifdef CONFIG_SYSFS
+    struct netdev_rx_queue  	*_rx;
+
+    unsigned int        		num_rx_queues;
+    unsigned int        		real_num_rx_queues;
+#endif
+
+    struct bpf_prog __rcu   	*xdp_prog;
+    unsigned long       		gro_flush_timeout;
+    rx_handler_func_t __rcu 	*rx_handler;
+    void __rcu      			*rx_handler_data;
+#ifdef CONFIG_NET_CLS_ACT
+    struct tcf_proto __rcu  	*ingress_cl_list;
+#endif
+    struct netdev_queue __rcu 	*ingress_queue;
+#ifdef CONFIG_NETFILTER_INGRESS
+    struct nf_hook_entries __rcu *nf_hooks_ingress;
+#endif
+
+    unsigned char       		broadcast[MAX_ADDR_LEN]; //链路层广播地址
+#ifdef CONFIG_RFS_ACCEL
+    struct cpu_rmap     		*rx_cpu_rmap;
+#endif
+    struct hlist_node   		index_hlist;
+
+/*
+ * Cache lines mostly used on transmit path
+ */
+    struct netdev_queue 		*_tx ____cacheline_aligned_in_smp;
+    unsigned int        		num_tx_queues;
+    unsigned int        		real_num_tx_queues;
+    struct Qdisc        		*qdisc;
+#ifdef CONFIG_NET_SCHED
+    DECLARE_HASHTABLE   		(qdisc_hash, 4);
+#endif
+    unsigned int        		tx_queue_len;
+    spinlock_t      			tx_global_lock;
+    int         				watchdog_timeo;
+
+#ifdef CONFIG_XPS
+    struct xps_dev_maps __rcu 	*xps_maps;
+#endif
+#ifdef CONFIG_NET_CLS_ACT
+    struct tcf_proto __rcu  	*egress_cl_list;
+#endif
+
+    /* These may be needed for future network-power-down code. */
+    struct timer_list   		watchdog_timer;
+	int __percpu        		*pcpu_refcnt;
+    struct list_head    		todo_list;
+    struct list_head    		link_watch_list;
+    enum { NETREG_UNINITIALIZED=0,
+           NETREG_REGISTERED,   /* completed register_netdevice */
+           NETREG_UNREGISTERING,    /* called unregister_netdevice */
+           NETREG_UNREGISTERED, /* completed unregister todo */
+           NETREG_RELEASED,     /* called free_netdev */
+           NETREG_DUMMY,        /* dummy device for NAPI poll */
+    } reg_state:8;
+    bool dismantle;
+    enum {
+        RTNL_LINK_INITIALIZED,
+        RTNL_LINK_INITIALIZING,
+    } rtnl_link_state:16;
+    bool 						needs_free_netdev;
+    void 						(*priv_destructor)(struct net_device *dev);
+
+#ifdef CONFIG_NETPOLL
+    struct netpoll_info __rcu   *npinfo;
+#endif
+
+    possible_net_t          	nd_net;
+    /* mid-layer private */
+    union {
+        void                    *ml_priv;
+        struct pcpu_lstats __percpu     *lstats;
+        struct pcpu_sw_netstats __percpu    *tstats;
+        struct pcpu_dstats __percpu     *dstats;
+        struct pcpu_vstats __percpu     *vstats;
+    };
+#if IS_ENABLED(CONFIG_GARP)
+    struct garp_port __rcu  	*garp_port;
+#endif
+#if IS_ENABLED(CONFIG_MRP)
+    struct mrp_port __rcu   	*mrp_port;
+#endif
+
+    struct device       		dev;
+    const struct attribute_group *sysfs_groups[4];
+    const struct attribute_group *sysfs_rx_queue_group;
+
+    const struct rtnl_link_ops 	*rtnl_link_ops;
+
+    /* for setting kernel sock attribute on TCP connection setup */
+#define GSO_MAX_SIZE        	65536
+    unsigned int        		gso_max_size;
+#define GSO_MAX_SEGS        	65535
+    u16         				gso_max_segs;
+
+#ifdef CONFIG_DCB
+    const struct dcbnl_rtnl_ops *dcbnl_ops;
+#endif
+    u8          				num_tc;
+    struct netdev_tc_txq    	tc_to_txq[TC_MAX_QUEUE];
+    u8          				prio_tc_map[TC_BITMASK + 1];
+
+#if IS_ENABLED(CONFIG_FCOE)
+    unsigned int        		fcoe_ddp_xid;
+#endif
+#if IS_ENABLED(CONFIG_CGROUP_NET_PRIO)
+    struct netprio_map __rcu 	*priomap;
+#endif
+    struct phy_device   		*phydev;
+    struct lock_class_key   	*qdisc_tx_busylock;
+    struct lock_class_key   	*qdisc_running_key;
+    bool            			proto_down;
+}; //(include/linux/netdevice.h)
+
+|-->dev_change_flags //(net/core/dev.c) 改变标识符
+	|-->old_flags = dev->flags, old_gflags = dev->gflags
+	|-->__dev_change_flags(dev, flags)
+	|-->changes = (old_flags ^ dev->flags) | (old_gflags ^ dev->gflags)
+	|-->__dev_notify_flags(dev, old_flags, changes)
+	
+|-->dev_set_promiscuity //(net/core/dev.c) 设置混杂模式
+	|-->__dev_set_promiscuity(dev, inc, true) //(net/core/dev.c)设置混杂模式
+		|-->dev->flags |= IFF_PROMISC
+		|-->dev->promiscuity += inc //对其引用进行增加
+		|-->if (dev->flags != old_flags)
+			|-->dev_change_rx_flags(dev, IFF_PROMISC)
+			
+		|-->if (notify)
+			|-->__dev_notify_flags(dev, old_flags, IFF_PROMISC)
+	
+	|-->dev_set_rx_mode(dev) //(net/core/dev.c)
+		|-->netif_addr_lock_bh(dev) //加锁
+		|-->__dev_set_rx_mode //(net/core/dev.c)		
+		|-->netif_addr_unlock_bh(dev) //解锁
+		
+|-->__dev_set_rx_mode //(net/core/dev.c) 设置接收模式
+	|-->if (!(dev->flags&IFF_UP)) //检查设备是否已经up
+		|-->return
+		
+	|-->if (!netif_device_present(dev)) //检查设备是否存在
+		|-->return
+		
+	|-->if (ops->ndo_set_rx_mode) //如果存在ndo_set_rx_mode回调函数
+		|-->ops->ndo_set_rx_mode(dev)
+			|-->set_rx_mode //(drivers/net/ethernet/3com/3c59x.c) 其中的一个实例
+				|-->if (dev->flags & IFF_PROMISC) //设置混杂模式
+					|-->new_mode = SetRxFilter|RxStation|RxMulticast|RxBroadcast|RxProm
+					
+				|-->iowrite16(new_mode, ioaddr + EL3_CMD)
+	
+	
+|-->struct iw_statistics {
+    __u16       		status;     /* Status
+                     * - device dependent for now */
+
+    struct iw_quality   qual;       /* Quality of the link
+                         * (instant/mean/max) */
+    struct iw_discarded discard;    /* Packet discarded counts */
+    struct iw_missed    miss;       /* Packet missed counts */
+};//(include/uapi/linux/wireless.h) 无线数据统计
+
+|-->struct iw_handler_def {
+    const iw_handler 			*standard;
+    __u16           			num_standard;
+
+#ifdef CONFIG_WEXT_PRIV
+    __u16           			num_private;
+    __u16           			num_private_args;
+    const iw_handler *  		private;
+    const struct iw_priv_args 	*private_args;
+#endif
+
+    struct iw_statistics*   	(*get_wireless_stats)(struct net_device *dev); //回调函数指针，用于获取无线的统计数据
+}; //(include/net/iw_handler.h) 
+
+|-->dev_mc_add //(net/core/dev_addr_lists.c) 添加链路层多播
+	|-->__dev_mc_add(dev, addr, false)  //(net/core/dev_addr_lists.c)
+		|-->netif_addr_lock_bh(dev) //加锁
+		|-->__hw_addr_add_ex(&dev->mc, addr, dev->addr_len,
+                   NETDEV_HW_ADDR_T_MULTICAST, global, false, 0) //添加链路层多播
+		|-->netif_addr_unlock_bh(dev) //解锁
+		
+|-->__hw_addr_add_ex //(net/core/dev_addr_lists.c)
+	|-->if (addr_len > MAX_ADDR_LEN) //检查参数长度
+		|-->return -EINVAL
+		
+	|-->__hw_addr_create_ex //(net/core/dev_addr_lists.c)
+		|-->ha = kmalloc(alloc_size, GFP_ATOMIC)
+		|-->ha->type = addr_type
+		|-->ha->refcount = 1
+		|-->ha->global_use = global
+		|-->ha->synced = sync ? 1 : 0
+		|-->ha->sync_cnt = 0
+		|-->list_add_tail_rcu(&ha->list, &list->list) //添加到列表尾部
+		|-->list->count++
+	
+|--------------------------------------------------net_device 结构 end---------------------------------------------------------|
+	

@@ -1,0 +1,85 @@
+//eg. src = <skmsg>setPONwlan.itvdoor?ssididx=1&wlssid=ChinaNet-ssid2&authmode=OPEN&wpsconfmode=0</skmsg>
+//  des = setPONwlan.itvdoor?ssididx=1&wlssid=ChinaNet-ssid2&authmode=OPEN&wpsconfmode=0
+
+zxicDbQryView
+zxicdbQryView
+
+lib/pmapi/source/wlan_pmapi.c
+application/webd/source/adaptor/webd_adaptor_awifi_register.c
+
+BOOL IPToStr(IP_ADDR *pIP, CHAR   *pStr, WORD wLen)
+pm_gpon_get_loid//
+
+bin/mount -n -t jffs2 /dev/mtdblock10 /usr/local/awifi
+
+
+|-->nf_nat_setup_info //(nf_nat_core.c)
+	|-->get_unique_tuple //(nf_nat_core.c)
+
+|-->si_webd_e8_get_pon_wanc_ip //(webd_adaptor_ponwancip.c) 获取IP地址
+	|-->pm_e8_wanc_get_comm_ip_ext //(e8_wanc_pmapi.c) 获取ip参数
+		|-->pm_e8_wanc_get_comm_ip //(e8_wanc_pmapi.c)
+			|-->pm_wanc_get_ip //(wanc_pmapi.c)
+				|-->plib_ifs_get_routeif_info //(ifs_api.c)
+					|-->plib_ifs_get_ifbase_config //(ifs_api.c)
+					|-->plib_ifs_get_routeif_base_info //(ifs_api.c)
+						|-->plib_ifs_db_get_routeif_info //(ifs_api.c) 从数据库RouteIFInfo中查询wan连接的IP地址
+						|-->plib_ifs_db_get_interface_info //(ifs_api.c) 从数据库InterfaceInfo中获取指定参数
+
+|-->itv_getWlanstats //(获取状态)
+	|-->itv_adapter_get_wifiInfo //()
+	|-->ReadSSIDConfInfo //(读取wlan配置参数)					
+		|-->itv_adapter_get_wlan_Config //(获取wlan参数配置)
+		
+
+|-->itv_setPONwlan //
+	|-->setSSIDConfInfo	//(设置wlan参数)	
+		|-->itv_adapter_set_wlan_configuration //(设置wlan参数)
+			|-->pm_wlan_set_config //(wlan_pmapi.c) 线属性配置接口
+				|-->si_wlan_check_cfg_change //
+		
+		|-->itv_adapter_set_wifiInfo //
+		|-->itv_adapter_set_WPSInfo //
+		
+	|-->ReadSSIDConfInfo //
+	|-->itv_adapter_get_wifiInfo //
+	
+	
+//TC kernel框架	
+|-->dev_queue_xmit //(dev.c)
+	|-->__dev_queue_xmit //(dev.c)
+		|-->__dev_xmit_skb //(dev.c)
+			|-->__qdisc_run //(sch_generic.c)
+				|-->__netif_schedule //(dev.c)
+					|-->__netif_reschedule //(dev.c)
+						|-->raise_softirq_irqoff(NET_TX_SOFTIRQ) //(softirq.c) 发送信号NET_TX_SOFTIRQ，让设备将数据发送出去
+
+//htb源码分析						
+|-->htb_module_init //(sch_htb.c)
+	|-->register_qdisc(&htb_qdisc_ops) //(sch_htb.c) 将htb算法注册到全局链表中，主要根据id进行判断，防止重复注册
+		|-->htb_class_ops //(sch_htb.c) 类操作
+			|-->
+		
+		|-->htb_enqueue //(sch_htb.c) 入队处理
+			|-->
+		
+		|-->htb_dequeue //(sch_htb.c) 出队处理
+		
+		|-->htb_init //(sch_htb.c) 初始化处理
+			|-->qdisc_watchdog_init //(sch_htb.c) 看门狗初始化
+			|-->htb_work_func //(sch_htb.c)
+				|-->__netif_schedule //(sch_htb.c)
+					|-->__netif_reschedule //(dev.c)
+						|-->raise_softirq_irqoff(NET_TX_SOFTIRQ) //(dev.c) 发送传输中断信号
+			
+		|-->htb_reset //(sch_htb.c) 恢复处理
+		
+		
+1.ITMS管理通道和接入方式（TR069WAN连接可有OLT创建）	采用路由方式的DHCP认证，仅限制访问ITMS管理平台，VLAN id = 104，业务类型为TR069	需终端预配置
+2.ITMS的URL地址（TR069连接URL可有OLT创建）	http://itms.scmcc.com.cn:9090/ACS-server/ACS 	需终端预配置请注意大小写
+3.ITMS管理通道相关参数本地配置限制
+4.终端连接数限制
+5.QoS的缺省队列
+6.心跳周期	
+
+【ZTE】【广西电信】修复切换地区码导致数据库文件未同步问题

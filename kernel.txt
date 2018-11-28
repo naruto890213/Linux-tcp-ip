@@ -1,0 +1,104 @@
+struct task_struct{ //task的结构体，进程的主数据结构
+	struct signal_struct        *signal;//进程公共所有
+	struct sighand_struct       *sighand;//信号执行函数链表
+	struct sigpending       	pending;//私有信号链表
+};
+
+struct signal_struct{
+	atomic_t        			sigcnt;
+	atomic_t        			live;
+	int         				nr_threads;
+	struct sigpending   		shared_pending//共享信号链表，用于进程组
+};
+
+struct sigpending {
+    struct list_head 			list;//链表
+    sigset_t 					signal;//掩码
+};
+
+struct files_struct {
+  /*
+   * read mostly part
+   */
+    atomic_t count;
+    bool resize_in_progress;
+    wait_queue_head_t resize_wait;
+
+    struct fdtable __rcu *fdt;
+    struct fdtable fdtab;
+  /*
+   * written part on a separate cache line in SMP
+   */
+    spinlock_t file_lock ____cacheline_aligned_in_smp;
+    unsigned int next_fd;
+    unsigned long close_on_exec_init[1];
+    unsigned long open_fds_init[1];
+    unsigned long full_fds_bits_init[1];
+    struct file __rcu * fd_array[NR_OPEN_DEFAULT];
+};
+
+struct fdtable {
+    unsigned int max_fds;
+    struct file __rcu **fd;      /* current fd array */
+    unsigned long *close_on_exec;
+    unsigned long *open_fds;
+    unsigned long *full_fds_bits;
+    struct rcu_head rcu;
+};
+
+|-->sys_mount//(fs/namespace.c)实际调用的是SYSCALL_DEFINE5(mount, char __user *, dev_name, char __user *, dir_name,
+        char __user *, type, unsigned long, flags, void __user *, data)
+	|-->do_mount //(fs/namespace.c)
+		|-->do_new_mount //(namespace.c) 挂载新节点
+			|-->get_fs_type //(namespace.c) 获取文件系统类型
+			|-->vfs_kern_mount //(namespace.c) 该函数主要是为新的文件系统准备一个挂载结构vfsmount，初始化，并从设备上读出超级块等信息，在内存中构建文件系统的轮廓
+				|-->alloc_vfsmnt //(namespace.c) 分配一个mount类型的数据结构
+				|-->mount_fs //(super.c) 调用file_system_type中的mount方法进行挂载
+			
+			|-->do_add_mount //(namespace.c) 将创建的vfsmount结构添加到全局结构中，以便在内存中形成一棵树结构。
+				|-->real_mount //(mount.h)
+				|-->graft_tree //(namespace.c)
+					|-->attach_recursive_mnt //(namespace.c)
+					
+					
+					
+|-->find_get_page //(pagemap.h)
+	|-->pagecache_get_page //(filemap.c)
+		|-->
+		
+
+//pdflush内核线程(用于将脏页写入磁盘)
+|-->sysctl_init //(sysctl.c)
+	|-->register_sysctl_table //(sysctl.c)
+		|-->register_sysctl_paths //(proc_sysctl.c)
+			|-->__register_sysctl_paths //(proc_sysctl.c)
+				|-->register_leaf_sysctl_tables //(proc_sysctl.c)
+					|-->
+			
+		|-->sysctl_base_table //(sysctl.c)
+			|-->vm_table //(sysctl.c)
+				|-->dirty_writeback_centisecs_handler //(page-writeback.c)
+					|-->proc_dointvec //(sysctl.c)
+						|-->do_proc_dointvec //(sysctl.c)
+							|-->__do_proc_dointvec //(sysctl.c)
+		
+	|-->kmemleak_not_leak //(sysctl.c)
+					
+|-->start_kernel //(init/main.c)
+	|-->pagecache_init //(filemap.c)
+		|-->page_writeback_init //(page-writeback.c)
+			|-->
+
+|-->swap_readpage //(page_io.c)			
+	|-->ntfs_readpage //(fs/ntfs/aops.c)
+		|-->ntfs_read_block //(fs/ntfs/aops.c)
+		
+|-->SYSCALL_DEFINE4(pread64, unsigned int, fd, char __user *, buf, size_t, count, loff_t, pos)
+|-->SYSCALL_DEFINE3(read, unsigned int, fd, char __user *, buf, size_t, count)
+	|-->vfs_read //(read_write.c)		
+		|-->__vfs_read //(read_write.c)
+			|-->new_sync_read //(read_write.c)
+				|-->call_read_iter //(fs.h)
+					|-->read_iter //(fs/nfs/file.c)	
+						|-->nfs_file_read //(fs/nfs/file.c)		
+							|-->nfs_file_direct_read //(direct.c)

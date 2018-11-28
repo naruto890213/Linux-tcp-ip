@@ -1,0 +1,25 @@
+|-->ip_fib_init //(fib_frontend.c)
+	|-->inet_rtm_newroute // 用户层创建新路由时调用的底层接口 ip route add 
+	|-->inet_rtm_delroute // 用户层删除路由时调用的底层接口  ip route delete 
+	|-->inet_dump_fib // 用户层使用命令转储路由选择表时调用的底层接口
+	
+	
+	
+	
+	
+	
+//软加速流程：
+|-->ffe_l3_hook_init //(ffe_l3_hook.c)
+	|-->nf_register_hook(&ffe_local_forward_ops) //(ffe_l3_hook.c)
+		|-->ffe_local_forward_ops //(ffe_l3_hook.c)
+			|-->ffe_local_forward_hook//(ffe_l3_hook.c)
+			
+			
+			
+			
+00010181	CSP_EPON_PID
+lib/pmapi/source/pon/pon_epon_zx279100_pmapi.c
+
+|-->OBJ_LOS_INFO_ID //(webd_convertpmapi.c)
+	|-->pm_epon_get_los_info//(pon_epon_zx279100_pmapi.c)
+		|-->pm_send_msg_2mm(CSP_EPON_PID, EV_PM_GET, PM_OBJ_LOS_INFO, inst, (LPVOID)ptLosInfo, sizeof(T_CM_LOS_INFO), (LPVOID)ptLosInfo, &dwAck)

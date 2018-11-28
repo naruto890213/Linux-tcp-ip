@@ -1,0 +1,31 @@
+kernel部分
+
+|-->ip_tables_init //(ip_tables.c)
+	|-->nf_register_sockopt(&ipt_sockopts) //注册用于和应用层通信的接口(主要是使用setsockopt和getsockopt)
+		|-->do_ipt_set_ctl // 用于setsockopt，应用层往内核设置参数
+			case IPT_SO_SET_REPLACE//(ip_tables.c)
+				|-->do_replace//(ip_tables.c)
+					|-->__do_replace //
+			
+			case IPT_SO_SET_ADD_COUNTERS//(ip_tables.c)
+				|-->do_add_counters//(ip_tables.c)
+					|-->
+		
+		|-->do_ipt_get_ctl // 用于getsockopt，应用层获取内核参数
+			case IPT_SO_GET_INFO//(ip_tables.c)
+				|-->get_info //(ip_tables.c)
+				
+			case IPT_SO_GET_ENTRIES//(ip_tables.c)
+				|-->get_entries //(ip_tables.c)
+				
+			case IPT_SO_GET_REVISION_MATCH//(ip_tables.c)
+			case IPT_SO_GET_REVISION_TARGET//(ip_tables.c)
+				|-->try_then_request_module //(ip_tables.c)
+				
+				
+|-->mark_mt_init //(xt_mark.c)
+	|-->mark_tg_reg //(xt_mark.c)
+		|-->mark_tg //(xt_mark.c) 最终处理打mark的地方
+
+|-->xt_request_find_target//		
+	|-->xt_find_target //(x_tables.c)

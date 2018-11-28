@@ -1,0 +1,13 @@
+|-->tcp_check_req //(tcp_minisocks.c)
+	|-->.syn_recv_sock //(tcp_ipv4.c)
+		|-->tcp_v4_syn_recv_sock //(tcp_ipv4.c) syn接收处理
+			|-->sk_acceptq_is_full //(tcp_ipv4.c) 检查accept的队列
+				|-->sk_max_ack_backlog //(sock.h)
+				
+
+|-->inetsw_array //(af_inet.c) 定义传输层，例如TCP、UDP
+	|-->inet_stream_ops //(af_inet.c)
+		|-->.listen        = inet_listen //(af_inet.c)
+			|-->inet_listen //(af_inet.c) 将socket状态迁移到listening状态				
+				|-->inet_csk_listen_start //(inet_connection_sock.c)
+					|-->sk->sk_max_ack_backlog = backlog //设置sk_max_ack_backlog的数值
