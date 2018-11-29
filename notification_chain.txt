@@ -1,0 +1,83 @@
+﻿|-->struct notifier_block {
+    notifier_fn_t 				notifier_call; //回调函数
+    struct notifier_block __rcu *next; //链接列表的元素
+    int 						priority; //该函数的优先级
+}; //(include/linux/notifier.h) 通知链列表元素类型
+
+|-->notifier_chain_register //(kernel/notifier.c) 链注册
+	|-->n->next = *nl
+	|-->rcu_assign_pointer(*nl, n) //(include/linux/rcupdate.h)
+
+|-->struct rw_semaphore {
+    __s32           			count;
+    raw_spinlock_t      		wait_lock;
+    struct list_head    		wait_list;
+#ifdef CONFIG_DEBUG_LOCK_ALLOC
+    struct lockdep_map 			dep_map;
+#endif
+};//(include/linux/rwsem-spinlock.h)
+	
+|-->struct blocking_notifier_head {
+    struct rw_semaphore 		rwsem;
+    struct notifier_block __rcu *head;
+};//(include/linux/notifier.h)	
+
+|-->BLOCKING_NOTIFIER_HEAD(inetaddr_chain) //重要的通知链
+|-->#define BLOCKING_NOTIFIER_HEAD(name) struct blocking_notifier_head name = BLOCKING_NOTIFIER_INIT(name)
+|-->BLOCKING_NOTIFIER_INIT //(include/linux/notifier.h)
+	|-->.rwsem = __RWSEM_INITIALIZER((name).rwsem)
+	|-->.head = NULL
+	
+	
+|-->RAW_NOTIFIER_HEAD(netdev_chain) //netdev_chain通知链
+|-->BLOCKING_NOTIFIER_HEAD(inet6addr_chain) //inet6addr_chain通知链
+
+|-->register_inetaddr_notifier //(net/ipv4/devinet.c) inetaddr_chain通知链注册
+	|-->blocking_notifier_chain_register(&inetaddr_chain, nb) //(kernel/notifier.c)
+		|-->down_write(&nh->rwsem) //加锁
+		|-->notifier_chain_register(&nh->head, n) //链注册
+		|-->up_write(&nh->rwsem) //解锁
+		 
+|-->register_netdevice_notifier //(net/core/dev.c) netdev_chain通知链注册
+	|-->raw_notifier_chain_register(&netdev_chain, nb)
+	|-->call_netdevice_notifier(nb, NETDEV_REGISTER, dev)
+	|-->call_netdevice_notifier(nb, NETDEV_UP, dev) //(net/core/dev.c)
+		|-->netdev_notifier_info_init(&info, dev)
+		|-->nb->notifier_call(nb, val, &info) //调用回调函数
+		
+|-->raw_notifier_chain_register //(kernel/notifier.c)
+	|-->notifier_chain_register(&nh->head, n) //链注册
+	
+	
+|-->notifier_call_chain //(kernel/notifier.c) 把通知消息排进某处的队列
+	|-->nb = rcu_dereference_raw(*nl)
+	|-->while (nb && nr_to_call)
+		|-->next_nb = rcu_dereference_raw(nb->next)
+		|-->ret = nb->notifier_call(nb, val, v) //调用回调函数
+		|-->if (nr_calls)
+			|-->(*nr_calls)++
+			
+		|-->if (ret & NOTIFY_STOP_MASK)
+			|-->break
+			
+		|-->nb = next_nb //移动到下一个通知节点
+		|-->nr_to_call--
+		
+
+|----------------通知链范例-----------------|	
+|-->static struct notifier_block fib_netdev_notifier = {
+    .notifier_call = fib_netdev_event, //fib的netdev通知链处理回调函数
+};//(net/ipv4/fib_frontend.c)
+
+|-->static struct notifier_block fib_inetaddr_notifier = {
+    .notifier_call = fib_inetaddr_event, //fib的inetaddr通知链处理回调函数
+};//(net/ipv4/fib_frontend.c)
+	
+|-->ip_fib_init //(net/ipv4/fib_frontend.c)
+	|-->fib_trie_init()
+	|-->register_pernet_subsys(&fib_net_ops)
+	|-->register_netdevice_notifier(&fib_netdev_notifier) //添加到netdev_chain通知链
+	|-->register_inetaddr_notifier(&fib_inetaddr_notifier) //添加到inetaddr_chain通知链
+	|-->rtnl_register(PF_INET, RTM_NEWROUTE, inet_rtm_newroute, NULL, 0)
+	|-->rtnl_register(PF_INET, RTM_DELROUTE, inet_rtm_delroute, NULL, 0)
+	|-->rtnl_register(PF_INET, RTM_GETROUTE, NULL, inet_dump_fib, 0)

@@ -1,0 +1,140 @@
+|-->proc_mkdir //(fs/proc/generic.c) proc目录创建函数
+	|-->proc_mkdir_data(name, 0, parent, NULL) //
+		|-->ent = __proc_create(&parent, name, S_IFDIR | mode, 2)
+		|-->if (ent)
+			|-->ent->proc_fops = &proc_dir_operations
+			|-->ent->proc_iops = &proc_dir_inode_operations
+			|-->parent->nlink++
+			|-->proc_register(parent, ent) //进行注册
+			
+		
+|-->proc_net_mkdir //(include/linux/proc_fs.h) 创建/proc/net目录
+	|-->proc_mkdir_data(name, 0, parent, net)
+	
+	
+|-->static const struct file_operations arp_seq_fops = {
+    .owner      = THIS_MODULE,
+    .open           = arp_seq_open,
+    .read           = seq_read,
+    .llseek         = seq_lseek,
+    .release    = seq_release_net,
+}; //(net/ipv4/arp.c) arp协议操作方法
+
+|-->arp_net_init //(net/ipv4/arp.c) arp协议初始化
+	|-->proc_create("arp", S_IRUGO, net->proc_net, &arp_seq_fops) //(fs/proc/generic.c)
+		|-->proc_create_data(name, mode, parent, proc_fops, NULL) //(fs/proc/generic.c)
+			|-->pde = __proc_create(&parent, name, mode, 1)
+			|-->pde->proc_fops = proc_fops
+			|-->pde->data = data
+			|-->pde->proc_iops = &proc_file_inode_operations
+			|-->proc_register(parent, pde)
+			
+			
+|-->arp_net_exit //(net/ipv4/arp.c) arp协议exit处理函数
+	|-->remove_proc_entry("arp", net->proc_net) //移除net目录下的文件
+	
+|-->static const struct seq_operations arp_seq_ops = {
+    .start  = clip_seq_start,
+    .next   = neigh_seq_next,
+    .stop   = neigh_seq_stop,
+    .show   = clip_seq_show,
+};//(net/atm/clip.c) arp的open操作初始化指针数组
+
+|-->arp_seq_open //(net/atm/clip.c) 打开arp文件操作
+	|-->seq_open_net(inode, file, &arp_seq_ops, sizeof(struct clip_seq_state)) //(fs/proc/proc_net.c)
+		|-->get_proc_net(ino) //
+		|-->__seq_open_private(f, ops, size) //(fs/seq_file.c)
+			|-->private = kzalloc(psize, GFP_KERNEL) //分配空间
+			|-->seq_open(f, ops) //(fs/seq_file.c) 初始化op指针			
+			|-->seq = f->private_data
+			|-->seq->private = private
+			|-->return private
+			
+|-->seq_open(f, ops) //(fs/seq_file.c)
+	|-->p = kzalloc(sizeof(*p), GFP_KERNEL)
+	|-->file->private_data = p
+	|-->mutex_init(&p->lock) //初始化lock锁
+	|-->p->op = op
+	|-->p->file = file
+	|-->file->f_version = 0
+	|-->file->f_mode &= ~FMODE_PWRITE
+	|-->return 0
+	
+	
+|-->struct ctl_table{
+    const char 				*procname; //在/proc/sys中所用的文件名
+    void 					*data;
+    int 					maxlen; //输出的内核变量的尺寸大小
+    umode_t 				mode; //分配给相关联的文件或目录的访问权限
+    struct ctl_table 		*child; //建立目录与文件之间的父子关系 
+    proc_handler 			*proc_handler; //读取或写入文件时完成读取或写入操作的函数
+    struct ctl_table_poll 	*poll;
+    void 					*extra1; //
+    void 					*extra2; //可选参数，用于定义变量的最小值和最大值
+} __randomize_layout; //(include/linux/sysctl.h) /proc/sys 文件和目录结构体
+
+|-->static struct ctl_table kern_table[] = {
+
+}; //(kernel/sysctl.c) kern_table数组的定义
+
+|-->static struct ctl_table vm_table[] = {
+
+}; //(kernel/sysctl.c) vm_table数组的定义
+
+
+|-->register_sysctl_table //(fs/proc/proc_sysctl.c) 在/proc/sys中注册文件
+	|-->register_sysctl_paths(null_path, table) //(fs/proc/proc_sysctl.c)
+		|-->__register_sysctl_paths(&sysctl_table_root.default_set, path, table) //(fs/proc/proc_sysctl.c)
+			|-->pos = new_path = kmalloc(PATH_MAX, GFP_KERNEL) //分配空间
+			|-->__register_sysctl_table //(fs/proc/proc_sysctl.c)
+				|-->header = kzalloc(sizeof(struct ctl_table_header) + sizeof(struct ctl_node)*nr_entries, GFP_KERNEL)
+				|-->init_header(header, root, set, node, table)
+				|-->sysctl_check_table(path, table)
+				|-->insert_header(dir, header) //(fs/proc/proc_sysctl.c)
+					|-->is_empty_dir(&dir->header)
+					|-->insert_links(header)
+					|-->insert_entry(header, entry) //(fs/proc/proc_sysctl.c)
+
+|-->static struct packet_type ip_packet_type __read_mostly = {
+    .type = cpu_to_be16(ETH_P_IP),
+    .func = ip_rcv, //ip协议栈的接收处理函数
+};					
+					
+|-->fs_initcall(inet_init) //(net/ipv4/af_inet.c)
+	|-->inet_init //(net/ipv4/af_inet.c)
+		|-->proto_register(&tcp_prot, 1)
+		|-->proto_register(&udp_prot, 1)
+		|-->proto_register(&raw_prot, 1)
+		|-->proto_register(&ping_prot, 1)
+		|-->sock_register(&inet_family_ops)
+		|-->ip_static_sysctl_init //
+		|-->inet_add_protocol(&icmp_protocol, IPPROTO_ICMP)
+		|-->inet_add_protocol(&udp_protocol, IPPROTO_UDP)
+		|-->inet_add_protocol(&tcp_protocol, IPPROTO_TCP)
+		|-->inet_add_protocol(&igmp_protocol, IPPROTO_IGMP)
+		|-->arp_init
+		|-->ip_init 
+		|-->tcp_init
+		|-->udp_init
+		|-->udplite4_register
+		|-->icmp_init
+		|-->init_inet_pernet_ops
+		|-->init_ipv4_mibs
+		|-->ipv4_proc_init //(net/ipv4/af_inet.c) ipv4的proc初始化		
+		|-->ipfrag_init
+		|-->dev_add_pack(&ip_packet_type)	
+	
+|-->ipv4_proc_init //(net/ipv4/af_inet.c) ipv4的proc初始化
+	|-->raw_proc_init //
+	|-->tcp4_proc_init //
+	|-->udp4_proc_init //
+	|-->ping_proc_init //
+	|-->ip_misc_proc_init //
+	
+|-->static struct pernet_operations tcp4_net_ops = {
+    .init = tcp4_proc_init_net,
+    .exit = tcp4_proc_exit_net,
+};
+	
+|-->tcp4_proc_init //(net/ipv4/tcp_ipv4.c) ipv4的tcp文件初始化
+	|-->register_pernet_subsys(&tcp4_net_ops)

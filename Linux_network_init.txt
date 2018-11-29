@@ -1,0 +1,289 @@
+|-->start_kernel //(init/main.c)
+	|-->set_task_stack_end_magic //
+	|-->smp_setup_processor_id() 
+	|-->debug_objects_early_init()
+	|-->cgroup_init_early()
+	|-->local_irq_disable()
+	|-->early_boot_irqs_disabled = true
+	|-->boot_cpu_init()
+	|-->page_address_init()
+	|-->setup_arch(&command_line)
+	|-->add_latent_entropy()
+	|-->add_device_randomness(command_line, strlen(command_line))
+	|-->boot_init_stack_canary()
+	|-->mm_init_cpumask(&init_mm)
+	|-->setup_command_line(command_line)
+	|-->setup_nr_cpu_ids()
+	|-->setup_per_cpu_areas()
+	|-->boot_cpu_state_init()
+	|-->smp_prepare_boot_cpu()
+	|-->build_all_zonelists(NULL)
+	|-->page_alloc_init()
+	|-->parse_early_param()
+	|-->jump_label_init()
+	|-->setup_log_buf(0)
+	|-->pidhash_init()
+	|-->vfs_caches_init_early()
+	|-->sort_main_extable()
+	|-->trap_init()
+	|-->mm_init()
+	|-->ftrace_init()
+	|-->early_trace_init()
+	|-->sched_init()
+	|-->preempt_disable()
+	|-->radix_tree_init()
+	|-->workqueue_init_early()
+	|-->rcu_init()
+	|-->trace_init()
+	|-->context_tracking_init()
+	|-->early_irq_init()
+	|-->init_IRQ()
+	|-->tick_init()
+	|-->rcu_init_nohz()
+	|-->init_timers()
+	|-->hrtimers_init()
+	|-->softirq_init()
+	|-->timekeeping_init()
+	|-->time_init()
+	|-->sched_clock_postinit()
+	|-->printk_safe_init()
+	|-->perf_event_init()
+	|-->profile_init()
+	|-->call_function_init()
+	|-->early_boot_irqs_disabled = false
+	|-->local_irq_enable()
+	|-->kmem_cache_init_late()
+	|-->console_init()
+	|-->lockdep_info()
+	|-->locking_selftest()
+	|-->mem_encrypt_init()
+	|-->page_ext_init()
+	|-->kmemleak_init()
+	|-->debug_objects_mem_init()
+	|-->setup_per_cpu_pageset()
+	|-->numa_policy_init()
+	|-->late_time_init()
+	|-->calibrate_delay()
+	|-->pidmap_init()
+	|-->anon_vma_init()
+	|-->acpi_early_init()
+	|-->thread_stack_cache_init()
+	|-->cred_init()
+	|-->fork_init()
+	|-->proc_caches_init()
+	|-->buffer_init()
+	|-->key_init()
+	|-->security_init()
+	|-->dbg_late_init()
+	|-->vfs_caches_init()
+	|-->pagecache_init()
+	|-->signals_init()
+	|-->proc_root_init()
+	|-->nsfs_init()
+	|-->cpuset_init()
+	|-->cgroup_init()
+	|-->taskstats_init_early()
+	|-->delayacct_init()
+	|-->check_bugs()
+	|-->acpi_subsystem_init()
+	|-->arch_post_acpi_subsys_init()
+	|-->sfi_init_late()
+	|-->rest_init() //(init/main.c)
+
+|-->rest_init //(init/main.c)
+	|-->rcu_scheduler_starting()
+	|-->kernel_thread(kernel_init, NULL, CLONE_FS) //创建内核线程
+	|-->rcu_read_lock()
+	|-->tsk = find_task_by_pid_ns(pid, &init_pid_ns)
+	|-->set_cpus_allowed_ptr(tsk, cpumask_of(smp_processor_id()))
+	|-->rcu_read_unlock()
+	|-->numa_default_policy()
+	|-->kernel_thread(kthreadd, NULL, CLONE_FS | CLONE_FILES) //创建内核线程
+	|-->rcu_read_lock()
+	|-->kthreadd_task = find_task_by_pid_ns(pid, &init_pid_ns) 
+	|-->rcu_read_unlock()
+	|-->system_state = SYSTEM_SCHEDULING
+	|-->complete(&kthreadd_done)
+	|-->schedule_preempt_disabled()
+	|-->cpu_startup_entry(CPUHP_ONLINE)
+	
+|-->kernel_init //(init/main.c)
+	|-->kernel_init_freeable()
+	|-->async_synchronize_full()
+	|-->ftrace_free_init_mem()
+	|-->free_initmem()
+	|-->mark_readonly()
+	|-->system_state = SYSTEM_RUNNING
+	|-->numa_default_policy()
+	|-->rcu_end_inkernel_boot()
+	|-->if (ramdisk_execute_command)
+		|-->run_init_process(ramdisk_execute_command) //(init/main.c)
+			|-->argv_init[0] = init_filename
+			|-->do_execve(getname_kernel(init_filename),
+					(const char __user *const __user *)argv_init,
+					(const char __user *const __user *)envp_init)
+		
+	|-->if (execute_command)
+		|-->run_init_process(execute_command)
+		
+	|-->try_to_run_init_process("/sbin/init")
+	|-->try_to_run_init_process("/etc/init")
+	|-->try_to_run_init_process("/bin/init")
+	|-->try_to_run_init_process("/bin/sh")
+	
+|-->kernel_init_freeable //(init/main.c) kernel初始化网络模块
+	|-->wait_for_completion(&kthreadd_done)
+	|-->set_mems_allowed(node_states[N_MEMORY])
+	|-->cad_pid = task_pid(current)
+	|-->smp_prepare_cpus(setup_max_cpus)
+	|-->workqueue_init()
+	|-->init_mm_internals()
+	|-->do_pre_smp_initcalls()
+	|-->lockup_detector_init()
+	|-->smp_init()
+	|-->sched_init_smp()
+	|-->page_alloc_init_late()
+	|-->do_basic_setup()
+	|-->sys_open((const char __user *) "/dev/console", O_RDWR, 0)
+	|-->sys_dup(0)
+	|-->sys_dup(0)
+	|-->if (!ramdisk_execute_command) //设置全局变量
+		|-->ramdisk_execute_command = "/init"
+		
+	|-->sys_access((const char __user *) ramdisk_execute_command, 0)
+	|-->integrity_load_keys()
+	|-->load_default_modules()
+	
+	
+|-->do_basic_setup //(init/main.c)
+	|-->cpuset_init_smp()
+	|-->shmem_init()
+	|-->driver_init()
+	|-->init_irq_proc()
+	|-->do_ctors()
+	|-->usermodehelper_enable()
+	|-->do_initcalls() //调用定义的初始化函数，包括sock_init和net_dev_init等
+	
+	
+|-->core_initcall //(include/linux/init.h) 该函数的作用是定义初始化函数，定义的函数将在 do_initcalls 中被调用
+	|-->__define_initcall(fn, 1) //fn为回调函数
+		|-->initcall_t __initcall_##fn##id __used \
+			__attribute__((__section__(".initcall" #id ".init"))) = fn 
+			
+			
+|-->struct irqaction {
+    irq_handler_t       	handler; //irq执行函数
+    void            		*dev_id; //设备标识符
+    void __percpu       	*percpu_dev_id;
+    struct irqaction    	*next;
+    irq_handler_t       	thread_fn;
+    struct task_struct  	*thread;
+    struct irqaction    	*secondary;
+    unsigned int        	irq; //irq中断编号
+    unsigned int        	flags; //一组标识
+    unsigned long       	thread_flags;
+    unsigned long       	thread_mask;
+    const char      		*name;
+    struct proc_dir_entry   *dir;
+} ____cacheline_internodealigned_in_smp; //(include/linux/interrupt.h) 中断例程结构体
+
+|-->struct pernet_operations __net_initdata loopback_net_ops = {
+    .init = loopback_net_init,
+};//(drivers/net/loopback.c)
+
+|-->static struct pernet_operations __net_initdata default_device_ops = {
+    .exit = default_device_exit,
+    .exit_batch = default_device_exit_batch,
+};//(net/core/dev.c)
+
+|-->net_dev_init //(net/core/dev.c) 设备处理层初始化
+	|-->dev_proc_init()
+	|-->netdev_kobject_init()
+	|-->INIT_LIST_HEAD(&ptype_all) //初始化ptype_all列表, 主要用于处理镜像数据包
+	|-->for (i = 0; i < PTYPE_HASH_SIZE; i++)
+		|-->INIT_LIST_HEAD(&ptype_base[i]) //初始化网络协议栈，tcp/ip
+		
+	|-->INIT_LIST_HEAD(&offload_base) //分片
+	|-->register_pernet_subsys(&netdev_net_ops)
+	|-->for_each_possible_cpu(i) //根据cpu个数进行设置
+		|-->INIT_WORK(flush, flush_backlog)
+		|-->skb_queue_head_init(&sd->input_pkt_queue)
+		|-->skb_queue_head_init(&sd->process_queue)
+		|-->INIT_LIST_HEAD(&sd->poll_list)
+		|-->sd->output_queue_tailp = &sd->output_queue
+		|-->sd->backlog.poll = process_backlog //很重要，该回调函数用于NAPI
+		|-->sd->backlog.weight = weight_p //设置权重
+		
+	|-->dev_boot_phase = 0
+	|-->register_pernet_device(&loopback_net_ops) //注册loopback类设备
+	|-->register_pernet_device(&default_device_ops)
+	|-->open_softirq(NET_TX_SOFTIRQ, net_tx_action) //设置软中断回调函数
+	|-->open_softirq(NET_RX_SOFTIRQ, net_rx_action) //设置软中断回调函数
+	|-->cpuhp_setup_state_nocalls(CPUHP_NET_DEV_DEAD, "net/dev:dead", NULL, dev_cpu_dead)
+	
+|-->static struct pernet_operations __net_initdata dev_proc_ops = {
+    .init = dev_proc_net_init,
+    .exit = dev_proc_net_exit,
+};//(net/core/net-procfs.c)
+
+|-->static struct pernet_operations __net_initdata dev_mc_net_ops = {
+    .init = dev_mc_net_init,
+    .exit = dev_mc_net_exit,
+};//(net/core/net-procfs.c)
+	
+|-->dev_proc_init //(net/core/net-procfs.c)
+	|-->ret = register_pernet_subsys(&dev_proc_ops)
+	|-->if (!ret)
+		|-->register_pernet_subsys(&dev_mc_net_ops)
+		
+|-->static const struct file_operations dev_seq_fops = {
+    .owner   = THIS_MODULE,
+    .open    = dev_seq_open,
+    .read    = seq_read,
+    .llseek  = seq_lseek,
+    .release = seq_release_net,
+};//(net/core/net-procfs.c)
+
+|-->static const struct file_operations softnet_seq_fops = {
+    .owner   = THIS_MODULE,
+    .open    = softnet_seq_open,
+    .read    = seq_read,
+    .llseek  = seq_lseek,
+    .release = seq_release,
+};//(net/core/net-procfs.c)
+
+|-->static const struct file_operations ptype_seq_fops = {
+    .owner   = THIS_MODULE,
+    .open    = ptype_seq_open,
+    .read    = seq_read,
+    .llseek  = seq_lseek,
+    .release = seq_release_net,
+};
+		
+|-->dev_proc_net_init //(net/core/net-procfs.c) 创建3个文件(/proc/net目录下面)
+	|-->proc_create("dev", S_IRUGO, net->proc_net, &dev_seq_fops) //记录nic下的网络接口，类似于ifconfig
+	|-->proc_create("softnet_stat", S_IRUGO, net->proc_net, &softnet_seq_fops) //
+	|-->proc_create("ptype", S_IRUGO, net->proc_net, &ptype_seq_fops)
+	
+|-->static const struct seq_operations ptype_seq_ops = {
+    .start = ptype_seq_start,
+    .next  = ptype_seq_next,
+    .stop  = ptype_seq_stop,
+    .show  = ptype_seq_show,
+};//(net/core/net-procfs.c)
+	
+|-->ptype_seq_open //(net/core/net-procfs.c)
+	|-->seq_open_net(inode, file, &ptype_seq_ops, sizeof(struct seq_net_private))
+	
+|-->static struct class net_class __ro_after_init = {
+    .name = 		"net",
+    .dev_release = 	netdev_release,
+    .dev_groups = 	net_class_groups,
+    .dev_uevent = 	netdev_uevent,
+    .ns_type = 		&net_ns_type_operations,
+    .namespace = 	net_namespace,
+};//(net/core/net-sysfs.c)
+	
+|-->netdev_kobject_init //(net/core/net-sysfs.c) 创建/sys/class目录下的文件路径 net
+	|-->kobj_ns_type_register(&net_ns_type_operations)
+	|-->class_register(&net_class)
