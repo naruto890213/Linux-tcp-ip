@@ -1,0 +1,162 @@
+﻿//设备注册模型
+|-->xxx_probe
+	|-->alloc_etherdev //分配空间
+	|-->xxx_config //进行参数配置
+		|-->register_netdev //进行注册
+			|-->register_netdevice //调用底层注册函数
+
+//设备注册模型示例:
+|-->tc589_probe //(drivers/net/ethernet/3com/3c589_cs.c)
+	|-->dev = alloc_etherdev(sizeof(struct el3_private)) //分配内存空间
+	|-->lp = netdev_priv(dev)
+	|-->spin_lock_init(&lp->lock)
+	|-->link->resource[0]->end = 16
+	|-->link->resource[0]->flags |= IO_DATA_PATH_WIDTH_16
+	|-->link->config_flags |= CONF_ENABLE_IRQ
+	|-->link->config_index = 1
+	|-->dev->netdev_ops = &el3_netdev_ops
+	|-->dev->watchdog_timeo = TX_TIMEOUT
+	|-->dev->ethtool_ops = &netdev_ethtool_ops
+	|-->return tc589_config(link)
+	
+|-->alloc_etherdev //(include/linux/etherdevice.h)
+	|-->alloc_etherdev_mq //(include/linux/etherdevice.h)
+		|-->alloc_etherdev_mqs //(net/ethernet/eth.c)
+			|-->alloc_netdev_mqs(sizeof_priv, "eth%d", NET_NAME_UNKNOWN, ether_setup, txqs, rxqs) //(net/core/dev.c)
+				
+				
+|-->alloc_netdev_mqs //(net/core/dev.c)
+	|-->p = kvzalloc(alloc_size, GFP_KERNEL | __GFP_RETRY_MAYFAIL)
+	|-->dev = PTR_ALIGN(p, NETDEV_ALIGN)
+	|-->dev_addr_init(dev)
+	|-->dev_mc_init(dev)
+	|-->dev_uc_init(dev)
+	|-->dev_net_set(dev, &init_net)
+	|-->dev->gso_max_size = GSO_MAX_SIZE
+	|-->dev->gso_max_segs = GSO_MAX_SEGS
+	|-->INIT_LIST_HEAD(&dev->napi_list)
+	|-->INIT_LIST_HEAD(&dev->unreg_list)
+	|-->INIT_LIST_HEAD(&dev->close_list)
+	|-->INIT_LIST_HEAD(&dev->link_watch_list)
+	|-->INIT_LIST_HEAD(&dev->adj_list.upper)
+	|-->INIT_LIST_HEAD(&dev->adj_list.lower)
+	|-->INIT_LIST_HEAD(&dev->ptype_all)
+	|-->INIT_LIST_HEAD(&dev->ptype_specific)
+	|-->setup(dev) //回调函数，该回调函数由参数传入，默认为 ether_setup
+	|-->netif_alloc_netdev_queues(dev)
+	|-->dev->ethtool_ops = &default_ethtool_ops
+	|-->nf_hook_ingress_init(dev)
+	
+|-->const struct header_ops eth_header_ops ____cacheline_aligned = {
+    .create     		= eth_header,
+    .parse      		= eth_header_parse,
+    .cache      		= eth_header_cache,
+    .cache_update   	= eth_header_cache_update,
+};//(net/ethernet/eth.c)
+	
+|-->ether_setup //(net/ethernet/eth.c) 设备类型初始化
+	|-->dev->header_ops     	= &eth_header_ops
+	|-->dev->type       		= ARPHRD_ETHER
+	|-->dev->hard_header_len    = ETH_HLEN
+	|-->dev->min_header_len 	= ETH_HLEN
+	|-->dev->mtu        		= ETH_DATA_LEN
+	|-->dev->min_mtu        	= ETH_MIN_MTU
+	|-->dev->max_mtu        	= ETH_DATA_LEN
+	|-->dev->addr_len       	= ETH_ALEN
+	|-->dev->tx_queue_len   	= DEFAULT_TX_QUEUE_LEN
+	|-->dev->flags      		= IFF_BROADCAST|IFF_MULTICAST
+	|-->dev->priv_flags     	|= IFF_TX_SKB_SHARING
+	|-->eth_broadcast_addr(dev->broadcast)
+		|-->memset(addr, 0xff, ETH_ALEN) //将其初始化为ff:ff:ff:ff:ff:ff
+
+|-->tc589_config //(drivers/net/ethernet/3com/3c589_cs.c)
+	|-->pcmcia_request_irq(link, el3_interrupt)
+	|-->pcmcia_enable_device(link)
+	|-->pcmcia_get_tuple(link, 0x88, &buf)
+	|-->SET_NETDEV_DEV(dev, &link->dev)
+	|-->register_netdev(dev)
+
+|-->register_netdev //(net/core/dev.c) 设备注册函数(NIC设备注册也是要该函数)
+	|-->rtnl_lock()
+	|-->register_netdevice(dev)
+	|-->rtnl_unlock()
+	
+|-->register_netdevice //(net/core/dev.c)
+	|-->might_sleep()
+	|-->spin_lock_init(&dev->addr_list_lock)
+	|-->netdev_set_addr_lockdep_class(dev)
+	|-->dev_get_valid_name(net, dev, dev->name)
+	|-->if (dev->netdev_ops->ndo_init) //如果存在init函数
+		|-->dev->netdev_ops->ndo_init(dev) //调用回调函数
+		
+	|-->if (!dev->ifindex)
+		|-->dev->ifindex = dev_new_index(net)
+		
+	|-->__dev_get_by_index(net, dev->ifindex)
+	|-->dev->hw_features |= NETIF_F_SOFT_FEATURES
+	|-->dev->features |= NETIF_F_SOFT_FEATURES
+	|-->dev->wanted_features = dev->features & dev->hw_features
+	|-->call_netdevice_notifiers(NETDEV_POST_INIT, dev)
+	|-->notifier_to_errno(ret)
+	|-->netdev_register_kobject(dev)
+	|-->dev->reg_state = NETREG_REGISTERED
+	|-->__netdev_update_features(dev)
+	|-->set_bit(__LINK_STATE_PRESENT, &dev->state)
+	|-->linkwatch_init_dev(dev)
+	|-->dev_init_scheduler(dev)
+	|-->dev_hold(dev)
+	|-->list_netdevice(dev)
+	|-->add_device_randomness(dev->dev_addr, dev->addr_len)
+	|-->call_netdevice_notifiers(NETDEV_REGISTER, dev)
+	|-->notifier_to_errno(ret)
+	
+|-->netdev_run_todo //(net/core/dev.c) 切割操作
+	|-->list_replace_init(&net_todo_list, &list)
+	|-->__rtnl_unlock()
+	|-->if (!list_empty(&list))
+		|-->rcu_barrier()
+		
+	|-->while (!list_empty(&list)) //对list链表进行轮训
+		|-->dev = list_first_entry(&list, struct net_device, todo_list) //从链表中获取节点
+		|-->list_del(&dev->todo_list) //将节点从链表 todo_list 中删除
+		|-->rtnl_lock()
+		|-->call_netdevice_notifiers(NETDEV_UNREGISTER_FINAL, dev) //调用回调函数
+		|-->__rtnl_unlock()
+		|-->dev->reg_state = NETREG_UNREGISTERED
+		|-->netdev_wait_allrefs(dev)
+		|-->if (dev->priv_destructor)
+			|-->dev->priv_destructor(dev) //调用销毁处理函数
+			
+		|-->if (dev->needs_free_netdev)
+			|-->free_netdev(dev)
+			
+		|-->rtnl_lock()
+		|-->dev_net(dev)->dev_unreg_count--
+		|-->__rtnl_unlock()
+		|-->wake_up(&netdev_unregistering_wq) //唤醒进程
+		|-->kobject_put(&dev->dev.kobj)
+		
+		
+|-->netdev_wait_allrefs //(net/core/dev.c) 等待dev->refcnt减少至0才会结束
+	|-->linkwatch_forget_dev(dev)
+	|-->rebroadcast_time = warning_time = jiffies
+	|-->refcnt = netdev_refcnt_read(dev) //读取dev的引用计数
+	|-->while (refcnt != 0) //当引用计数不为0时会一直循环
+		|-->if (time_after(jiffies, rebroadcast_time + 1 * HZ)) //等待1S时间
+			|-->rtnl_lock() //加锁
+			|-->call_netdevice_notifiers(NETDEV_UNREGISTER, dev) //发送NETDEV_UNREGISTER消息
+			|-->__rtnl_unlock() //解锁
+			|-->rcu_barrier()
+			|-->rtnl_lock() //加锁
+			|-->call_netdevice_notifiers(NETDEV_UNREGISTER_FINAL, dev)
+			|-->if (test_bit(__LINK_STATE_LINKWATCH_PENDING, &dev->state)) //检查指定位置状态
+				|-->linkwatch_run_queue()
+				
+			|-->__rtnl_unlock() //解锁
+			|-->rebroadcast_time = jiffies //更新时间
+			
+		|-->msleep(250)
+		|-->refcnt = netdev_refcnt_read(dev) //重新读取引用计数
+		|-->if (time_after(jiffies, warning_time + 10 * HZ)) //等待10S时间
+			|-->pr_emerg("unregister_netdevice: waiting for %s to become free. Usage count = %d\n", dev->name, refcnt) //打印告警信息
+			|-->warning_time = jiffies //更新时间

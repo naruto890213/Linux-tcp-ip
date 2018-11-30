@@ -1,0 +1,140 @@
+﻿注册关键字
+__setup(string, function_handler) //string是关键字，而function_handler是相关联的处理函数，string必须以=字符作结束，以使parse_args的解析能轻松一点
+__setup("netdev=", netdev_boot_setup) //(net/core/dev.c)以netdev为例的demo
+
+#define __setup(str, fn) __setup_param(str, fn, fn, 0)
+
+|-->static initcall_t *initcall_levels[] __initdata = {
+    __initcall0_start,
+    __initcall1_start,
+    __initcall2_start,
+    __initcall3_start,
+    __initcall4_start,
+    __initcall5_start,
+    __initcall6_start,
+    __initcall7_start,
+    __initcall_end,
+}; //(init/main.c) 全局变量，用于存放不同的节区数据
+
+|-->#define INIT_SETUP(initsetup_align)                 \
+        . = ALIGN(initsetup_align);             \
+        VMLINUX_SYMBOL(__setup_start) = .;          \
+        KEEP(*(.init.setup))                    \
+        VMLINUX_SYMBOL(__setup_end) = .; //(include/asm-generic/vmlinux.lds.h)
+
+|-->#define INIT_CALLS_LEVEL(level)                     \
+        VMLINUX_SYMBOL(__initcall##level##_start) = .;      \
+        KEEP(*(.initcall##level##.init))            \
+        KEEP(*(.initcall##level##s.init))           \ //(include/asm-generic/vmlinux.lds.h)
+
+|-->#define INIT_CALLS                          \
+        VMLINUX_SYMBOL(__initcall_start) = .;           \
+        KEEP(*(.initcallearly.init))                \
+        INIT_CALLS_LEVEL(0)                 \
+        INIT_CALLS_LEVEL(1)                 \
+        INIT_CALLS_LEVEL(2)                 \
+        INIT_CALLS_LEVEL(3)                 \
+        INIT_CALLS_LEVEL(4)                 \
+        INIT_CALLS_LEVEL(5)                 \
+        INIT_CALLS_LEVEL(rootfs)                \
+        INIT_CALLS_LEVEL(6)                 \
+        INIT_CALLS_LEVEL(7)                 \
+        VMLINUX_SYMBOL(__initcall_end) = .; //(include/asm-generic/vmlinux.lds.h)
+//从上面的宏可以看出 __initcallN_start 即等于 __initcallN_init
+
+|-->do_initcalls //(init/main.c) 执行初始化操作(初始.initcallN.init内存节区)
+	|-->for (level = 0; level < ARRAY_SIZE(initcall_levels) - 1; level++)
+		|-->do_initcall_level(level) 
+
+|-->do_initcall_level //(init/main.c)
+	|-->parse_args(initcall_level_names[level],
+           initcall_command_line, __start___param,
+           __stop___param - __start___param,
+           level, level,
+           NULL, &repair_env_string)
+		   
+	|-->for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++) //遍历初始化列表，进行初始化操作
+		|-->do_one_initcall(*fn)
+		
+|-->do_one_initcall //(init/main.c) 初始化单个节点
+	|-->initcall_blacklisted(fn)
+	|-->ret = fn() //执行回调函数
+	|-->if (preempt_count() != count) //查看是否抢占
+		|-->preempt_count_set(count) 
+		
+	|-->irqs_disabled() //关闭中断
+	|-->local_irq_enable() //开启中断
+	|-->add_latent_entropy //
+		
+		
+|-->parse_early_param //(init/main.c)
+	|-->strlcpy(tmp_cmdline, boot_command_line, COMMAND_LINE_SIZE)
+	|-->parse_early_options(tmp_cmdline)
+		|-->parse_args("early options", cmdline, NULL, 0, 0, 0, NULL, do_early_param)
+		
+early_param			__setup			__obsolete_setup
+	|					|					|
+	|					|					|
+	|					|					|
+	|------------------>|<-------------------
+						|
+						V
+					__setup_param
+						|
+						|
+						V
+				".init.setup" 节区
+				
+|-->early_param //(include/linux/init.h)
+	|-->__setup_param //(include/linux/init.h)
+		|-->__section(.init.setup) //放入节区 ".init.setup"
+				
+				
+|-->struct obs_kernel_param {
+    const char *str; //关键字
+    int (*setup_func)(char *); //处理函数
+    int early; //标识
+}; //(include/linux/init.h)
+
+|-->struct netdev_boot_setup {
+    char 	name[IFNAMSIZ];
+    struct 	ifmap map;
+}; //(include/linux/netdevice.h)
+
+|-->netdev_boot_setup //(net/core/dev.c)
+	|-->get_options(str, ARRAY_SIZE(ints), ints)
+	|-->if (ints[0] > 0)
+		|-->map.irq = ints[1]
+		
+	|-->if (ints[0] > 1)
+		|-->map.base_addr = ints[2]
+		
+	|-->if (ints[0] > 2)
+		|-->map.mem_start = ints[3]
+		
+	|-->if (ints[0] > 3)
+		|-->map.mem_end = ints[4]
+		
+	|-->netdev_boot_setup_add(str, &map) //(net/core/dev.c)
+		|-->s = dev_boot_setup
+		|-->for (i = 0; i < NETDEV_BOOT_SETUP_MAX; i++)
+			|-->if (s[i].name[0] == '\0' || s[i].name[0] == ' ')
+				|-->strlcpy(s[i].name, name, IFNAMSIZ)
+				|-->memcpy(&s[i].map, map, sizeof(s[i].map))
+				
+		|-->return i >= NETDEV_BOOT_SETUP_MAX ? 0 : 1
+		
+		
+xxx_initcall宏 //(include/linux/init.h) 具体参见该文件, 这些宏最终将填写如内存节区.initcallN.init中
+|-->subsys_initcall //(include/linux/init.h)
+	|-->__define_initcall //(include/linux/init.h)
+		|-->__attribute__((__section__(".initcall" #id ".init"))) = fn
+		
+
+|-->__initcall(fn) //(include/linux/init.h)
+	|-->device_initcall(fn) //(include/linux/init.h)
+		|-->__define_initcall(fn, 6)
+		
+|-->__exitcall(fn) //(include/linux/init.h)
+	|-->__exitcall_##fn __exit_call = fn //(include/linux/init.h)
+		|-->__section(.exitcall.exit) //(include/linux/init.h)

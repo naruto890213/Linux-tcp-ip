@@ -172,6 +172,43 @@
     int (*sriov_configure) (struct pci_dev *dev, int num_vfs); /* PF pdev */
     const struct pci_error_handlers *err_handler;
     const struct attribute_group **groups;
-    struct device_driver    driver;
-    struct pci_dynids dynids;
+    struct device_driver    	driver;
+    struct pci_dynids 			dynids; //动态ID
 };//(include/linux/pci.h) PCI层和设备驱动程序之间的接口
+
+|-->pci_enable_wake //(drivers/pci/pci.c) 打开WOL(网络唤醒)功能
+	|-->pci_has_subordinate(dev)
+	|-->if (enable) //打开WOL
+		|-->pci_pme_capable(dev, state)
+		|-->pci_pme_active(dev, true)
+		|-->platform_pci_set_wakeup(dev, true)
+		|-->dev->wakeup_prepared = true
+	
+	|-->else //关闭WOL
+		|-->platform_pci_set_wakeup(dev, false)
+		|-->pci_pme_active(dev, false)
+		|-->dev->wakeup_prepared = false
+		
+		
+|-->pci_pme_active //(drivers/pci/pci.c)
+	|-->__pci_pme_active //包裹函数
+	|-->if (dev->pme_poll)
+		|-->if (enable) //设置为true
+			|-->pme_dev = kmalloc(sizeof(struct pci_pme_device), GFP_KERNEL) //分配空间
+			|-->pme_dev->dev = dev
+			|-->mutex_lock(&pci_pme_list_mutex)
+			|-->list_add(&pme_dev->list, &pci_pme_list) //添加到列表中
+			|-->if (list_is_singular(&pci_pme_list))
+				|-->queue_delayed_work(system_freezable_wq, &pci_pme_work, msecs_to_jiffies(PME_TIMEOUT)) //添加到工作队列中
+			|-->mutex_unlock(&pci_pme_list_mutex)
+		
+		|-->else //设置为false
+			|-->mutex_lock(&pci_pme_list_mutex)
+			|-->list_for_each_entry(pme_dev, &pci_pme_list, list) //进行轮训
+				|-->if (pme_dev->dev == dev)
+					|-->list_del(&pme_dev->list) //从列表中将其删除
+					|-->kfree(pme_dev) //是否分配的空间
+			|-->mutex_unlock(&pci_pme_list_mutex)
+			
+|-->platform_pci_set_wakeup //(drivers/pci/pci.c)
+	|-->pci_platform_pm ? pci_platform_pm->set_wakeup(dev, enable) : -ENODEV //查看是否定义了platform，如果有定义则调用其回调函数set_wakeup唤醒进程
