@@ -138,3 +138,236 @@ xxx_initcall宏 //(include/linux/init.h) 具体参见该文件, 这些宏最终�
 |-->__exitcall(fn) //(include/linux/init.h)
 	|-->__exitcall_##fn __exit_call = fn //(include/linux/init.h)
 		|-->__section(.exitcall.exit) //(include/linux/init.h)
+		
+|-->struct Qdisc noop_qdisc = {
+    .enqueue    =   noop_enqueue,
+    .dequeue    =   noop_dequeue,
+    .flags      =   TCQ_F_BUILTIN,
+    .ops        =   &noop_qdisc_ops,
+    .q.lock     =   __SPIN_LOCK_UNLOCKED(noop_qdisc.q.lock),
+    .dev_queue  =   &noop_netdev_queue,
+    .running    =   SEQCNT_ZERO(noop_qdisc.running),
+    .busylock   =   __SPIN_LOCK_UNLOCKED(noop_qdisc.busylock),
+}; //(net/sched/sch_generic.c)
+
+|-->dev_activate //(net/sched/sch_generic.c) 初始化由流量控制使用的出口队列
+	|-->if (dev->qdisc == &noop_qdisc)
+		|-->attach_default_qdiscs(dev)
+		
+	|-->netdev_for_each_tx_queue(dev, transition_one_qdisc, &need_watchdog)
+	|-->if (dev_ingress_queue(dev))
+		|-->transition_one_qdisc(dev, dev_ingress_queue(dev), NULL)
+		
+	|-->if (need_watchdog) //是否开启看门狗
+		|-->netif_trans_update(dev)
+		|-->dev_watchdog_up(dev) 
+		
+		
+|-->attach_default_qdiscs //(net/sched/sch_generic.c) 默认流处理
+	|-->txq = netdev_get_tx_queue(dev, 0)
+	|-->if (!netif_is_multiqueue(dev) || dev->priv_flags & IFF_NO_QUEUE) //不为多播且无队列
+		|-->netdev_for_each_tx_queue(dev, attach_one_default_qdisc, NULL)
+		|-->dev->qdisc = txq->qdisc_sleeping
+		|-->qdisc_refcount_inc(dev->qdisc)
+		
+	|-->else //不满足上面的条件时进行这条分支
+		|-->qdisc = qdisc_create_dflt(txq, &mq_qdisc_ops, TC_H_ROOT)
+		|-->if (qdisc) //创建成功
+			|-->dev->qdisc = qdisc
+			|-->qdisc->ops->attach(qdisc)
+			
+			
+|-->transition_one_qdisc //(net/sched/sch_generic.c)
+	|-->
+	
+	
+//3c59x 网卡实例
+|-->static struct pci_driver vortex_driver = {
+    .name       = "3c59x",
+    .probe      = vortex_init_one,
+    .remove     = vortex_remove_one,
+    .id_table   = vortex_pci_tbl,
+    .driver.pm  = VORTEX_PM_OPS, //操作处理回调函数列表
+}; //(drivers/net/ethernet/3com/3c59x.c)
+
+|-->static const struct dev_pm_ops vortex_pm_ops = {
+    .suspend = vortex_suspend, //挂起设备操作处理函数
+    .resume = vortex_resume,
+    .freeze = vortex_suspend,
+    .thaw = vortex_resume,
+    .poweroff = vortex_suspend,
+    .restore = vortex_resume,
+}; //(drivers/net/ethernet/3com/3c59x.c)
+
+|-->#define VORTEX_PM_OPS (&vortex_pm_ops)
+
+|-->vortex_suspend //(drivers/net/ethernet/3com/3c59x.c) 设备挂起操作
+	|-->netif_device_detach(ndev)
+	|-->vortex_down(ndev, 1)
+	
+|-->netif_device_detach //(net/core/dev.c)
+	|-->if (test_and_clear_bit(__LINK_STATE_PRESENT, &dev->state) && netif_running(dev)) //清除dev->state中的__LINK_STATE_PRESENT标识
+		|-->netif_tx_stop_all_queues(dev) //如果传输已经开启则关闭其出口队列
+		
+
+|-->vortex_resume //(drivers/net/ethernet/3com/3c59x.c) 设备重新继续
+	|-->vortex_up(ndev)
+	|-->netif_device_attach(ndev) //(net/core/dev.c)
+		|-->if (!test_and_set_bit(__LINK_STATE_PRESENT, &dev->state) && netif_running(dev)) //设置dev->state为__LINK_STATE_PRESENT
+			|-->netif_tx_wake_all_queues(dev) //唤醒队列
+			|-->__netdev_watchdog_up(dev) //唤醒看门狗
+			
+			
+|-->netif_carrier_on //(net/sched/sch_generic.c) 检测设备上有载波时调用该函数设置状态
+	|-->if (test_and_clear_bit(__LINK_STATE_NOCARRIER, &dev->state)) //将dev->state的状态__LINK_STATE_NOCARRIER清空
+		|-->if (dev->reg_state == NETREG_UNINITIALIZED) //当设备未注册时直接返回
+			|-->return
+			
+		|-->atomic_inc(&dev->carrier_changes) //递增引用计数
+		|-->linkwatch_fire_event(dev) //产生一个链接状态变更事件
+		|-->if (netif_running(dev))
+			|-->__netdev_watchdog_up(dev)
+			
+			
+|-->linkwatch_fire_event //(net/core/link_watch.c)
+	|-->linkwatch_urgent_event(dev)
+	|-->if (!test_and_set_bit(__LINK_STATE_LINKWATCH_PENDING, &dev->state)) //清空位置__LINK_STATE_LINKWATCH_PENDING
+		|-->linkwatch_add_event(dev) //添加事件到队列中
+		
+	|-->linkwatch_schedule_work(urgent) //(net/core/link_watch.c)
+	
+	
+|-->netif_carrier_off //(net/sched/sch_generic.c) 载波缺失时的处理函数
+	|-->if (!test_and_set_bit(__LINK_STATE_NOCARRIER, &dev->state)) //设置位__LINK_STATE_NOCARRIER
+        |-->if (dev->reg_state == NETREG_UNINITIALIZED) //如果为注册
+			|-->return //直接返回退出
+			
+		|-->atomic_inc(&dev->carrier_changes)
+		|-->linkwatch_fire_event(dev)
+		
+	
+|-->linkwatch_run_queue //(net/core/link_watch.c)
+	|-->__linkwatch_run_queue(0) //(net/core/link_watch.c)
+		|-->time_after(linkwatch_nextevent, jiffies + HZ) //等待1S
+		|-->clear_bit(LW_URGENT, &linkwatch_flags)
+		|-->spin_lock_irq(&lweventlist_lock) //加锁
+		|-->list_splice_init(&lweventlist, &wrk)
+		|-->while (!list_empty(&wrk))
+			|-->dev = list_first_entry(&wrk, struct net_device, link_watch_list)
+			|-->list_del_init(&dev->link_watch_list) //从队列中删除设备
+			|-->spin_unlock_irq(&lweventlist_lock)
+			|-->linkwatch_do_dev(dev)
+			|-->spin_lock_irq(&lweventlist_lock)
+			
+		|-->if (!list_empty(&lweventlist))
+			|-->linkwatch_schedule_work(0)
+		|-->spin_unlock_irq(&lweventlist_lock) //解锁
+		
+		
+|-->linkwatch_do_dev //(net/core/link_watch.c) 处理载波
+	|-->smp_mb__before_atomic()
+	|-->clear_bit(__LINK_STATE_LINKWATCH_PENDING, &dev->state) //清空位
+	|-->if (dev->flags & IFF_UP)
+		|-->if (netif_carrier_ok(dev)) //有载波
+			|-->dev_activate(dev)
+		|-->else //没有检查到载波
+			|-->dev_deactivate(dev)
+			
+		|-->netdev_state_change(dev) //设置状态
+		
+	|-->dev_put(dev)
+	
+	
+|-->inet_ioctl //(net/ipv4/af_inet.c) ethtool工具(主要是ipv4 用于与内核的交互)
+	|-->switch (cmd)
+		|-->case SIOCGSTAMP:
+			|-->err = sock_get_timestamp(sk, (struct timeval __user *)arg);
+			|-->break;
+		|-->case SIOCGSTAMPNS:
+			|-->err = sock_get_timestampns(sk, (struct timespec __user *)arg);
+			|-->break;
+		|-->case SIOCADDRT:
+		|-->case SIOCDELRT:
+		|-->case SIOCRTMSG:
+			|-->err = ip_rt_ioctl(net, cmd, (void __user *)arg);
+			|-->break;
+		|-->case SIOCDARP:
+		|-->case SIOCGARP:
+		|-->case SIOCSARP:
+			|-->err = arp_ioctl(net, cmd, (void __user *)arg);
+			|-->break;
+		|-->case SIOCGIFADDR:
+		|-->case SIOCSIFADDR:
+		|-->case SIOCGIFBRDADDR:
+		|-->case SIOCSIFBRDADDR:
+		|-->case SIOCGIFNETMASK:
+		|-->case SIOCSIFNETMASK:
+		|-->case SIOCGIFDSTADDR:
+		|-->case SIOCSIFDSTADDR:
+		|-->case SIOCSIFPFLAGS:
+		|-->case SIOCGIFPFLAGS:
+		|-->case SIOCSIFFLAGS:
+			|-->err = devinet_ioctl(net, cmd, (void __user *)arg);
+			|-->break;
+		|-->default:
+			|-->if (sk->sk_prot->ioctl)
+				|-->err = sk->sk_prot->ioctl(sk, cmd, arg);
+			|-->else
+				|-->err = -ENOIOCTLCMD;
+			
+		return err
+		
+|-->devinet_ioctl //(net/ipv4/devinet.c)
+
+
+|-->inet6_ioctl //(net/ipv6/af_inet6.c) ethtool工具(主要是ipv6 用于与内核的交互)
+	|-->switch (cmd)
+		|-->case SIOCGSTAMP:
+			|-->return sock_get_timestamp(sk, (struct timeval __user *)arg);
+
+		|-->case SIOCGSTAMPNS:
+			|-->return sock_get_timestampns(sk, (struct timespec __user *)arg);
+
+		|-->case SIOCADDRT:
+		|-->case SIOCDELRT:
+			|-->return ipv6_route_ioctl(net, cmd, (void __user *)arg);
+
+		|-->case SIOCSIFADDR:
+			|-->return addrconf_add_ifaddr(net, (void __user *) arg);
+			
+		|-->case SIOCDIFADDR:
+			|-->return addrconf_del_ifaddr(net, (void __user *) arg);
+			
+		|-->case SIOCSIFDSTADDR:
+			|-->return addrconf_set_dstaddr(net, (void __user *) arg);
+			
+		|-->default:
+			|-->if (!sk->sk_prot->ioctl)
+				|-->return -ENOIOCTLCMD;
+				
+			|-->return sk->sk_prot->ioctl(sk, cmd, arg);
+	
+    |-->return 0;
+	
+	
+|-->generic_mii_ioctl //(drivers/net/mii.c)
+	|-->mii_data->phy_id &= mii_if->phy_id_mask
+	|-->mii_data->reg_num &= mii_if->reg_num_mask
+	|-->switch(cmd)
+		|-->case SIOCGMIIPHY:
+			|-->mii_data->phy_id = mii_if->phy_id
+			
+		|-->case SIOCGMIIREG:
+			|-->mii_data->val_out = mii_if->mdio_read(mii_if->dev, mii_data->phy_id, mii_data->reg_num)
+			
+		|-->case SIOCSMIIREG:
+			|-->val = mii_data->val_in
+			|-->if (mii_data->phy_id == mii_if->phy_id)
+				|-->switch(mii_data->reg_num)
+					|-->case MII_BMCR:
+						|-->
+						
+					|-->case MII_ADVERTISE:
+						|-->mii_if->advertising = val
+						
+			|-->mii_if->mdio_write(mii_if->dev, mii_data->phy_id, mii_data->reg_num, val)
