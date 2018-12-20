@@ -209,11 +209,16 @@
 					|-->case forward: //进行抓发
 						|-->ip_mkroute_input //(net/ipv4/route.c)
 							|-->__mkroute_input //(net/ipv4/route.c)
+								|-->rt_dst_alloc(out_dev->dev, 0, res->type, IN_DEV_CONF_GET(in_dev, NOPOLICY), IN_DEV_CONF_GET(out_dev, NOXFRM), do_cache) //分配空间
+									|-->rt->dst.output = ip_output //设置出口函数
+									
 								|-->rth->dst.input = ip_forward //设置回调函数
 								
 					|-->case local_input: //发往本地
 						|-->rt_dst_alloc //(net/ipv4/route.c)
-							|-->rt->dst.input = ip_local_deliver //发往本地
+							|-->rt->dst.output = ip_output //设置出口
+							|-->if (flags & RTCF_LOCAL)
+								|-->rt->dst.input = ip_local_deliver //发往本地
 		
 |-->ip_rcv_finish //(net/ipv4/ip_input.c) 通过PREROUTING链后的数据处理
 	|-->skb = l3mdev_ip_rcv(skb)
@@ -326,6 +331,11 @@
 	|-->ip_options_build
 	|-->dst_output
 	
+|-->ip_append_data //(ip_output.c) 将传输请求暂存于缓冲区并产生最佳大小的数据片段
+
+|-->ip_build_and_send_pkt //(ip_output.c) 由TCP使用，用来传输SYN ACK消息
+
+|-->
 	
 |-->ip_options_compile //(net/ipv4/ip_options.c) ip option解析
 	|-->if (skb)
@@ -337,6 +347,32 @@
 	|-->iph = optptr - sizeof(struct iphdr)
 	|-->for (l = opt->optlen; l > 0; )
 	
+|-->ip_local_deliver //(net/ipv4/ip_input.c) 本地传递函数
+	|-->if (ip_is_fragment(ip_hdr(skb))) //判断数据包是否分片
+		|-->if (ip_defrag(net, skb, IP_DEFRAG_LOCAL_DELIVER))
+			|-->return 0 
+			
+	|-->return NF_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_IN,
+               net, NULL, skb, skb->dev, NULL,
+               ip_local_deliver_finish) //通过Netfilter校验后的数据交由函数 ip_local_deliver_finish 处理
+			   
+|-->ip_local_deliver_finish //(net/ipv4/ip_input.c) 本地数据传递处理函数
+	|-->__skb_pull(skb, skb_network_header_len(skb))
+	|-->rcu_read_lock()
+	|-->raw_local_deliver(skb, protocol)
+	|-->ipprot = rcu_dereference(inet_protos[protocol]) //根据具体的协议进行处理(tcp/udp)
+	|-->if (ipprot) //查找到相应的协议
+		|-->if (!ipprot->no_policy)
+			|-->xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)
+			
+		|-->ipprot->handler(skb) //调用上层应用程序
+		|-->__IP_INC_STATS(net, IPSTATS_MIB_INDELIVERS)
+		
+	|-->else //未查找到相应的协议
+		|-->if (!raw)
+			|-->xfrm4_policy_check(NULL, XFRM_POLICY_IN, skb)
+	
+	|-->rcu_read_unlock()
 	
 |-->ip_forward //(net/ipv4/ip_forward.c) 数据转发
 	|-->if (skb->pkt_type != PACKET_HOST)
@@ -374,21 +410,21 @@
 		|-->goto drop
 		
 	|-->iph = ip_hdr(skb)
-	|-->ip_decrease_ttl(iph)
+	|-->ip_decrease_ttl(iph) //对ttl进行减一处理
 	|-->if (IPCB(skb)->flags & IPSKB_DOREDIRECT && !opt->srr && !skb_sec_path(skb))
-		|-->ip_rt_send_redirect(skb)
+		|-->ip_rt_send_redirect(skb) //当有更好的跳点时发送 ICMP_REDIRECT 消息 
 		
 	|-->skb->priority = rt_tos2priority(iph->tos)
 	|-->return NF_HOOK(NFPROTO_IPV4, NF_INET_FORWARD,
                net, NULL, skb, skb->dev, rt->dst.dev,
-               ip_forward_finish)
+               ip_forward_finish) //如果通过NAT规则，则进入程序 ip_forward_finish
 			   
 |-->ip_call_ra_chain //(net/ipv4/ip_input.c)
 	|-->u8 protocol = ip_hdr(skb)->protocol
 	|-->for (ra = rcu_dereference(ip_ra_chain); ra; ra = rcu_dereference(ra->next))
 		|-->if (sk && inet_sk(sk)->inet_num == protocol &&
             (!sk->sk_bound_dev_if || sk->sk_bound_dev_if == dev->ifindex) && net_eq(sock_net(sk), net))
-			|-->if (ip_is_fragment(ip_hdr(skb)))
+			|-->if (ip_is_fragment(ip_hdr(skb))) //判断数据包是否分片
 				|-->if (ip_defrag(net, skb, IP_DEFRAG_CALL_RA_CHAIN))
 					|-->return true
 					
@@ -398,3 +434,115 @@
 					|-->raw_rcv(last, skb2)
 					
 			|-->last = sk
+
+|-->#define IP_MF       0x2000 //第14位有效
+|-->#define IP_DF       0x4000 //第15位有效			
+|-->ip_is_fragment //(include/net/ip.h) 判断数据包是否分片
+	|-->return (iph->frag_off & htons(IP_MF | IP_OFFSET)) != 0
+	
+|-->ip_defrag //(net/ipv4/ip_fragment.c) 
+	|-->__IP_INC_STATS(net, IPSTATS_MIB_REASMREQDS)
+	|-->skb_orphan(skb)
+	|-->qp = ip_find(net, ip_hdr(skb), user, vif) //查找ip头
+	|-->if (qp)
+		|-->spin_lock(&qp->q.lock)
+		|-->ret = ip_frag_queue(qp, skb)
+		|-->spin_unlock(&qp->q.lock)
+		|-->ipq_put(qp)
+		|-->return ret
+		
+	|-->__IP_INC_STATS(net, IPSTATS_MIB_REASMFAILS)
+	|-->kfree_skb(skb)
+	|-->return -ENOMEM
+	
+|-->ip_frag_queue //(net/ipv4/ip_fragment.c) ip封包处理 Add new segment to existing queue
+	|-->if (qp->q.flags & INET_FRAG_COMPLETE)
+		|-->goto err
+		
+	|-->if (!(IPCB(skb)->flags & IPSKB_FRAG_COMPLETE) &&
+        unlikely(ip_frag_too_far(qp)) &&
+        unlikely(err = ip_frag_reinit(qp)))
+		|-->ipq_kill(qp)
+		|-->goto err
+		
+	|-->ecn = ip4_frag_ecn(ip_hdr(skb)->tos)
+	|-->offset = ntohs(ip_hdr(skb)->frag_off)
+	|-->flags = offset & ~IP_OFFSET
+	|-->offset &= IP_OFFSET
+	|-->offset <<= 3 //offset is in 8-byte chunks
+	|-->ihl = ip_hdrlen(skb)
+	|-->end = offset + skb->len - skb_network_offset(skb) - ihl
+	|-->if ((flags & IP_MF) == 0) //判断是否为最后一个数据包
+		|-->if (end < qp->q.len || ((qp->q.flags & INET_FRAG_LAST_IN) && end != qp->q.len))
+			|-->goto err
+		|-->qp->q.flags |= INET_FRAG_LAST_IN
+		|-->qp->q.len = end
+	|-->else //后续还有数据包存在
+		|-->if (end&7)
+			|-->end &= ~7
+			|-->if (skb->ip_summed != CHECKSUM_UNNECESSARY) //是否需要检验
+				|-->skb->ip_summed = CHECKSUM_NONE
+				
+		|-->if (end > qp->q.len)
+			|-->if (qp->q.flags & INET_FRAG_LAST_IN)
+				|-->goto err
+			|-->qp->q.len = end
+			
+	|-->if (end == offset)
+		|-->goto err
+		
+	|-->if (!pskb_pull(skb, skb_network_offset(skb) + ihl))
+		|-->goto err
+		
+	|-->pskb_trim_rcsum(skb, end - offset)
+	|-->FRAG_CB(skb)->offset = offset
+	|-->add_frag_mem_limit(qp->q.net, skb->truesize)
+	|-->if (qp->q.flags == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) && qp->q.meat == qp->q.len)
+		|-->skb->_skb_refdst = 0UL
+		|-->err = ip_frag_reasm(qp, prev, dev)
+		|-->skb->_skb_refdst = orefdst
+		|-->return err
+		
+	|-->skb_dst_drop(skb)
+	
+|-->ip_forward_finish //(net/ipv4/ip_forward.c) 通过Netfilter校验后的数据转发处理函数
+	|-->if (unlikely(opt->optlen))
+		|-->ip_forward_options(skb) //forward数据校验
+		
+	|-->dst_output(net, sk, skb) //(include/net/dst.h)
+		|-->skb_dst(skb)->output(net, sk, skb) 
+			|-->ip_output //该回调函数在 ip_rcv_finish 中已经定义
+
+|-->ip_output //(net/ipv4/ip_output.c) 数据发送处理函数
+	|-->skb->protocol = htons(ETH_P_IP)
+	|-->NF_HOOK_COND(NFPROTO_IPV4, NF_INET_POST_ROUTING,
+                net, sk, skb, NULL, dev,
+                ip_finish_output,
+                !(IPCB(skb)->flags & IPSKB_REROUTED)) //如果通过了 Netfilter规则则进入函数 ip_finish_output
+
+|-->ip_finish_output //(net/ipv4/ip_output.c)
+	|-->BPF_CGROUP_RUN_PROG_INET_EGRESS(sk, skb)
+	|-->ip_skb_dst_mtu(sk, skb)
+	|-->if (skb_is_gso(skb))
+		|-->ip_finish_output_gso(net, sk, skb, mtu)
+		
+	|-->if (skb->len > mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU))
+		|-->ip_fragment(net, sk, skb, mtu, ip_finish_output2)
+		
+	|-->ip_finish_output2(net, sk, skb) 
+	
+|-->ip_local_deliver //(net/ipv4/ip_input.c) 本地数据传递
+	|-->if(ip_is_fragment(ip_hdr(skb))) //判断数据包是否分片
+		|-->if (ip_defrag(net, skb, IP_DEFRAG_LOCAL_DELIVER)) //对分片的数据包进行重新封包
+			|-->return 0
+			
+	|-->return NF_HOOK(NFPROTO_IPV4, NF_INET_LOCAL_IN,
+               net, NULL, skb, skb->dev, NULL,
+               ip_local_deliver_finish) //将数据包送入Netfilter进行校验，如果校验通过则进入 ip_local_deliver_finish 函数
+			   
+|-->ip_local_deliver_finish //(net/ipv4/ip_input.c) 本地数据包传递处理函数
+	|-->
+	
+
+|-->ip_local_out //(net/ipv4/ip_output.c)
+	|-->__ip_local_out //(net/ipv4/ip_output.c)
