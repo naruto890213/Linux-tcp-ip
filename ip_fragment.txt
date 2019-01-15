@@ -1,0 +1,317 @@
+|-->ip_fragment //(ip_output.c)
+	|-->struct iphdr *iph = ip_hdr(skb)
+	|-->if ((iph->frag_off & htons(IP_DF)) == 0)
+		|-->return ip_do_fragment(net, sk, skb, output)
+		
+	|-->if (unlikely(!skb->ignore_df || (IPCB(skb)->frag_max_size && IPCB(skb)->frag_max_size > mtu)))
+		|-->IP_INC_STATS(net, IPSTATS_MIB_FRAGFAILS)
+		|-->icmp_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(mtu)) //发送icmp通知给来源地告知此问题
+		|-->return -EMSGSIZE
+		
+	|-->return ip_do_fragment(net, sk, skb, output)
+	
+|-->ip_do_fragment //(ip_output.c)
+	|-->if (skb->ip_summed == CHECKSUM_PARTIAL && (err = skb_checksum_help(skb)))
+		|-->goto fail
+		
+	|-->iph = ip_hdr(skb)
+	|-->mtu = ip_skb_dst_mtu(sk, skb)
+	|-->if (IPCB(skb)->frag_max_size && IPCB(skb)->frag_max_size < mtu)
+		|-->mtu = IPCB(skb)->frag_max_size
+		
+	|-->hlen = iph->ihl * 4 //数据头长度计算，根据头部长度乘上4得到
+	|-->mtu = mtu - hlen
+	|-->IPCB(skb)->flags |= IPSKB_FRAG_COMPLETE
+	|-->ll_rs = LL_RESERVED_SPACE(rt->dst.dev) //链路层保留空间
+	|-->if (skb_has_frag_list(skb)) //查看是否有frag列表
+|--------------------------------if (skb_has_frag_list(skb)) start---------------------------|
+		|-->first_len = skb_pagelen(skb)
+		|-->if (first_len - hlen > mtu || ((first_len - hlen) & 7) || ip_is_fragment(iph) || skb_cloned(skb) || skb_headroom(skb) < ll_rs)
+			|-->goto slow_path
+			
+		|-->skb_walk_frags(skb, frag)
+			|-->if (frag->len > mtu || ((frag->len & 7) && frag->next) || skb_headroom(frag) < hlen + ll_rs)
+				|-->goto slow_path_clean
+				
+			|-->if (skb_shared(frag))
+				|-->goto slow_path_clean
+				
+			|-->if (skb->sk)
+				|-->frag->sk = skb->sk
+				|-->frag->destructor = sock_wfree
+				
+			|-->skb->truesize -= frag->truesize 
+	|-------------------------skb_walk_frags end---------------------------|
+		
+		|-->frag = skb_shinfo(skb)->frag_list
+		|-->skb_frag_list_init(skb)
+		|-->skb->data_len = first_len - skb_headlen(skb)
+		|-->iph->tot_len = htons(first_len)
+		|-->iph->frag_off = htons(IP_MF)
+		|-->ip_send_check(iph) //发送检测
+			
+	|-----------------------------for (;;) start---------------------------|
+		|-->for (;;)
+			|-->if (frag)
+				|-->frag->ip_summed = CHECKSUM_NONE
+				|-->skb_reset_transport_header(frag)
+				|-->__skb_push(frag, hlen)
+				|-->skb_reset_network_header(frag)
+				|-->memcpy(skb_network_header(frag), iph, hlen)
+				|-->iph = ip_hdr(frag)
+				|-->iph->tot_len = htons(frag->len)
+				|-->ip_copy_metadata(frag, skb)
+				|-->if (offset == 0)
+					|-->ip_options_fragment(frag)
+				|-->offset += skb->len - hlen
+				|-->iph->frag_off = htons(offset>>3)
+				|-->if (frag->next)
+					|-->iph->frag_off |= htons(IP_MF)
+				|-->ip_send_check(iph)
+				
+			|-->err = output(net, sk, skb) //数据发送
+			|-->if (!err) //发送失败更新统计数据
+				|-->IP_INC_STATS(net, IPSTATS_MIB_FRAGCREATES)
+			|-->if (err || !frag) //发送成功则退出循环
+				|-->break 
+				
+			|-->skb = frag
+			|-->frag = skb->next
+			|-->skb->next = NULL
+	|-----------------------------for (;;) end---------------------------|			
+		|-->if (err == 0) //发送失败更新统计数据并退出函数
+			|-->IP_INC_STATS(net, IPSTATS_MIB_FRAGOKS)
+			|-->return 0
+			
+		|-->while (frag)
+			|-->skb = frag->next
+			|-->kfree_skb(frag)
+			|-->frag = skb
+			
+		|-->IP_INC_STATS(net, IPSTATS_MIB_FRAGFAILS)
+		|-->return err
+			
+slow_path_clean:
+		|-->skb_walk_frags(skb, frag2)
+			|-->if (frag2 == frag)
+				|-->break
+				
+			|-->frag2->sk = NULL
+			|-->frag2->destructor = NULL
+			|-->skb->truesize += frag2->truesize
+|--------------------------------if (skb_has_frag_list(skb)) end---------------------------|
+			
+slow_path: //慢速分段方式
+	|-->iph = ip_hdr(skb)
+	|-->left = skb->len - hlen
+	|-->ptr = hlen
+	|-->offset = (ntohs(iph->frag_off) & IP_OFFSET) << 3
+	|-->not_last_frag = iph->frag_off & htons(IP_MF)
+	|-->while (left > 0) //剩余数据长度
+|---------------------------while (left > 0) start-------------------------|
+		|-->if (len > mtu) //不能超过mtu
+			|-->len = mtu
+			
+		|-->if (len < left)
+			|-->len &= ~7
+			
+		|-->skb2 = alloc_skb(len + hlen + ll_rs, GFP_ATOMIC) //内核支持L2防火墙机制，更新以容纳一个可能的802.1Q报头
+		|-->ip_copy_metadata(skb2, skb)
+		|-->skb_reserve(skb2, ll_rs)
+		|-->skb_put(skb2, len + hlen)
+		|-->skb_reset_network_header(skb2)
+		|-->skb2->transport_header = skb2->network_header + hlen
+		|-->if (skb->sk)
+			|-->skb_set_owner_w(skb2, skb->sk)
+			
+		|-->skb_copy_from_linear_data(skb, skb_network_header(skb2), hlen)
+		|-->skb_copy_bits(skb, ptr, skb_transport_header(skb2), len)
+		|-->left -= len
+		|-->iph = ip_hdr(skb2)
+		|-->iph->frag_off = htons((offset >> 3))
+		|-->if (IPCB(skb)->flags & IPSKB_FRAG_PMTU)
+			|-->iph->frag_off |= htons(IP_DF)
+			
+		|-->if (offset == 0)
+			|-->ip_options_fragment(skb)
+			
+		|-->iph->tot_len = htons(len + hlen)
+		|-->ip_send_check(iph)
+		|-->err = output(net, sk, skb2) //数据发送
+		|-->IP_INC_STATS(net, IPSTATS_MIB_FRAGCREATES) //刷新数据记录
+|---------------------------while (left > 0) end---------------------------|
+	
+	|-->consume_skb(skb)
+	|-->IP_INC_STATS(net, IPSTATS_MIB_FRAGOKS)
+	|-->return err //返回发送数据的结果值
+	
+fail:
+	|-->kfree_skb(skb)
+	|-->IP_INC_STATS(net, IPSTATS_MIB_FRAGFAILS)
+	|-->return err
+	
+	
+|-->ip_defrag //(net/ipv4/ip_fragment.c) ip重组函数
+	|-->__IP_INC_STATS(net, IPSTATS_MIB_REASMREQDS)
+	|-->skb_orphan(skb)
+	|-->qp = ip_find(net, ip_hdr(skb), user, vif) //Lookup (or create) queue header
+		|-->spin_lock(&qp->q.lock)
+		|-->ret = ip_frag_queue(qp, skb)
+		|-->spin_unlock(&qp->q.lock)
+		|-->ipq_put(qp)
+		|-->return ret 
+	
+	|-->__IP_INC_STATS(net, IPSTATS_MIB_REASMFAILS)
+	|-->kfree_skb(skb)
+	
+|-->ip_find //(ip_fragment.c)
+	|-->hash = ipqhashfn(iph->id, iph->saddr, iph->daddr, iph->protocol)
+	|-->q = inet_frag_find(&net->ipv4.frags, &ip4_frags, &arg, hash)
+	|-->if (IS_ERR_OR_NULL(q)) //判断q是否为合法的数值
+		|-->inet_frag_maybe_warn_overflow(q, pr_fmt())
+		|-->return NULL
+		
+	|-->return container_of(q, struct ipq, q)
+	
+|-->inet_frag_find //(inet_fragment.c) 查找数据包片段
+	|-->if (frag_mem_limit(nf) > nf->low_thresh)
+		|-->inet_frag_schedule_worker(f)
+		
+	|-->hash &= (INETFRAGS_HASHSZ - 1)
+	|-->hb = &f->hash[hash]
+	|-->spin_lock(&hb->chain_lock)
+	|-->hlist_for_each_entry(q, &hb->chain, list) //遍历链表
+		|-->if (q->net == nf && f->match(q, key)) //查找到数据包
+			|-->refcount_inc(&q->refcnt) //增加引用计数
+			|-->spin_unlock(&hb->chain_lock) //解锁
+			|-->return q //返回查找到的数据指针
+		|-->depth++
+	|-->spin_unlock(&hb->chain_lock)
+	|-->if (depth <= INETFRAGS_MAXDEPTH) //如果未找到数据包且未到最大值
+		|-->return inet_frag_create(nf, f, key) //生成数据包(第一包数据包)
+		
+	|-->if (inet_frag_may_rebuild(f))
+		|-->if (!f->rebuild)
+			|-->f->rebuild = true
+		|-->inet_frag_schedule_worker(f)
+		
+	|-->return ERR_PTR(-ENOBUFS)
+	
+|-->inet_frag_create //(inet_fragment.c)
+	|-->q = inet_frag_alloc(nf, f, arg) //分配内存空间
+	|-->inet_frag_intern //(inet_fragment.c)
+		|-->get_frag_bucket_locked //加锁
+		|-->hlist_for_each_entry(qp, &hb->chain, list) //轮训链表
+			|-->if (qp->net == nf && f->match(qp, arg)) //查询数据包是否匹配
+			|-->refcount_inc(&qp->refcnt)
+			|-->spin_unlock(&hb->chain_lock) //解锁
+			|-->qp_in->flags |= INET_FRAG_COMPLETE
+			|-->inet_frag_put(qp_in, f)
+			|-->return qp
+			
+	|-->qp = qp_in
+	|-->if (!mod_timer(&qp->timer, jiffies + nf->timeout)) //启动垃圾收集定时器，如果无法在规定时间内完成组包则回收创建的数据包等结构
+		|-->refcount_inc(&qp->refcnt)
+		
+	|-->refcount_inc(&qp->refcnt)
+	|-->hlist_add_head(&qp->list, &hb->chain) //添加链表
+	|-->spin_unlock(&hb->chain_lock) //解锁
+	|-->return qp
+	
+|-->ip_frag_queue //(ip_fragment.c) Add new segment to existing queue
+	|-->if (qp->q.flags & INET_FRAG_COMPLETE)
+		|-->goto err
+		
+	|-->if (!(IPCB(skb)->flags & IPSKB_FRAG_COMPLETE) && unlikely(ip_frag_too_far(qp)) && unlikely(err = ip_frag_reinit(qp)))
+		|-->ipq_kill(qp)
+		|-->goto err
+		
+	|-->ecn = ip4_frag_ecn(ip_hdr(skb)->tos)
+	|-->offset = ntohs(ip_hdr(skb)->frag_off)
+	|-->flags = offset & ~IP_OFFSET
+	|-->offset &= IP_OFFSET
+	|-->offset <<= 3
+	|-->ihl = ip_hdrlen(skb)
+	|-->end = offset + skb->len - skb_network_offset(skb) - ihl
+	|-->err = -EINVAL
+	
+	|-->if ((flags & IP_MF) == 0) //判断是否为数据包的最后一片
+		|-->if (end < qp->q.len || ((qp->q.flags & INET_FRAG_LAST_IN) && end != qp->q.len))
+			|-->goto err
+			
+		|-->qp->q.flags |= INET_FRAG_LAST_IN
+		|-->qp->q.len = end
+	|--else //存在分片的情况
+		|-->if (end&7) 
+			|-->end &= ~7
+			|-->if (skb->ip_summed != CHECKSUM_UNNECESSARY)
+				|-->skb->ip_summed = CHECKSUM_NONE
+				
+		|-->if (end > qp->q.len)
+			|-->if (qp->q.flags & INET_FRAG_LAST_IN)
+				|-->goto err
+				
+			|-->qp->q.len = end
+			
+	|-->if (end == offset)
+		|-->goto err
+		
+	|-->if (!pskb_pull(skb, skb_network_offset(skb) + ihl))
+		|-->goto err
+		
+	|-->err = pskb_trim_rcsum(skb, end - offset)
+	|-->if (err)
+		|-->goto err
+		
+	|-->prev = qp->q.fragments_tail
+	|-->if (!prev || FRAG_CB(prev)->offset < offset)
+		|-->goto found
+		
+	|-->for (next = qp->q.fragments; next != NULL; next = next->next)
+		|-->if (FRAG_CB(next)->offset >= offset)
+			|-->break
+		|-->prev = next
+		
+found:
+	|-->if (prev)
+		|-->int i = (FRAG_CB(prev)->offset + prev->len) - offset
+		|-->if (i > 0)
+			|-->if (!pskb_pull(skb, i))
+				|-->goto err
+				
+	|-->err = -ENOMEM
+	|-->while (next && FRAG_CB(next)->offset < end) //循环处理分片数据包
+		|-->int i = end - FRAG_CB(next)->offset
+		|-->if (i < next->len)
+			|-->if (!pskb_pull(next, i))
+				|-->goto err
+			|-->FRAG_CB(next)->offset += i
+			|-->qp->q.meat -= i
+			|-->if (next->ip_summed != CHECKSUM_UNNECESSARY)
+				|-->next->ip_summed = CHECKSUM_NONE
+			|-->break
+		|-->else //(i >= next->len)
+			|-->struct sk_buff *free_it = next
+			|-->next = next->next
+			|-->if (prev)
+				|-->prev->next = next
+			|-->else
+				|-->qp->q.fragments = next
+				
+			|-->qp->q.meat -= free_it->len
+			|-->sub_frag_mem_limit(qp->q.net, free_it->truesize)
+			|-->kfree_skb(free_it)
+				
+	|-->FRAG_CB(skb)->offset = offset
+	|-->add_frag_mem_limit(qp->q.net, skb->truesize)
+	|-->fragsize = skb->len + ihl
+	|-->if (ip_hdr(skb)->frag_off & htons(IP_DF) && fragsize > qp->max_df_size)
+		|-->qp->max_df_size = fragsize
+		
+	|-->if (qp->q.flags == (INET_FRAG_FIRST_IN | INET_FRAG_LAST_IN) && qp->q.meat == qp->q.len)
+		|-->err = ip_frag_reasm(qp, prev, dev)
+		|-->skb->_skb_refdst = orefdst
+		|-->return err
+		
+	|-->skb_dst_drop(skb)
+	|-->return -EINPROGRESS
